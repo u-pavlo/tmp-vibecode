@@ -16,7 +16,9 @@ import {
   Cpu,
   Binary,
   Network,
-  Shield
+  Shield,
+  Plus,
+  Minus
 } from 'lucide-react';
 
 export type ChainKey = 'ETHEREUM' | 'SOLANA' | 'ARBITRUM' | 'STARKNET' | 'CUSTOM';
@@ -284,6 +286,10 @@ export const HyperCoreCanvas3D: React.FC = () => {
   const [isExploded, setIsExploded] = useState(false);
   const [tags, setTags] = useState<VerificationTag[]>([]);
 
+  // Smooth camera/mesh shift lerp when Formula Lab inspector is open
+  const isLabOpenRef = useRef(isLabOpen);
+  const offsetXLerpRef = useRef(0);
+
   // Exploded view animation references
   const isExplodedRef = useRef(false);
   const explodeLerpRef = useRef(0);
@@ -317,14 +323,19 @@ export const HyperCoreCanvas3D: React.FC = () => {
   const discriminant = computeDiscriminant(params.a, params.b);
   const isSingular = discriminant === 0;
 
+  // Sync ref with state
+  useEffect(() => {
+    isLabOpenRef.current = isLabOpen;
+  }, [isLabOpen]);
+
   // Active chain metadata
   const activeChainMeta = selectedChain !== 'CUSTOM'
     ? CHAIN_PRESETS[selectedChain]
     : {
         id: 'CUSTOM' as ChainKey,
-        name: 'Custom Topology Lab',
+        name: 'Custom Lab',
         shortName: 'Formula Lab',
-        badge: `p=${params.p}, q=${params.q} Manifold`,
+        badge: `p=${params.p}, q=${params.q}`,
         curveType: 'Custom Weierstrass Elliptic Curve',
         formula: `y² = x³ ${params.a === 0 ? '' : params.a > 0 ? `+ ${params.a}x` : `- ${Math.abs(params.a)}x`} ${params.b === 0 ? '' : params.b > 0 ? `+ ${params.b}` : `- ${Math.abs(params.b)}`} mod p`,
         details: 'User-configured parametric algebraic geometry. Real-time GPU re-parameterization with live non-singularity assessment.',
@@ -597,6 +608,22 @@ export const HyperCoreCanvas3D: React.FC = () => {
       animId = requestAnimationFrame(animate);
       const delta = clock.getDelta();
       const elapsed = clock.getElapsedTime();
+
+      // Smooth Viewport Offset: Glide 3D curve to the left when Formula Lab is docked on the right
+      // This leaves the curve 100% visible and unblocked while editing!
+      const targetOffsetX = isLabOpenRef.current ? -1.35 : 0.0;
+      offsetXLerpRef.current = THREE.MathUtils.lerp(offsetXLerpRef.current, targetOffsetX, 0.08);
+      const currentOffsetX = offsetXLerpRef.current;
+
+      if (meshGroupRef.current) {
+        meshGroupRef.current.position.x = currentOffsetX;
+      }
+      if (ringsRef.current) {
+        ringsRef.current.position.x = currentOffsetX;
+      }
+      if (controlsRef.current) {
+        controlsRef.current.target.x = currentOffsetX;
+      }
 
       // Update OrbitControls
       controls.update();
@@ -926,11 +953,11 @@ export const HyperCoreCanvas3D: React.FC = () => {
       const plane = new THREE.Plane();
       plane.setFromNormalAndCoplanarPoint(
         camera.getWorldDirection(new THREE.Vector3()).negate(),
-        new THREE.Vector3(0, 0, 0)
+        new THREE.Vector3(offsetXLerpRef.current, 0, 0)
       );
       const target = new THREE.Vector3();
       raycasterRef.current.ray.intersectPlane(plane, target);
-      hitPoint = target || new THREE.Vector3(0, 0, 0);
+      hitPoint = target || new THREE.Vector3(offsetXLerpRef.current, 0, 0);
       hitNormal = camera.position.clone().sub(hitPoint).normalize();
     }
 
@@ -969,7 +996,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
       const preset = CHAIN_PRESETS[key];
       setParams({ ...preset.params });
       if (cameraRef.current) {
-        const centerPoint = new THREE.Vector3(0, 0, 0);
+        const centerPoint = new THREE.Vector3(offsetXLerpRef.current, 0, 0);
         const normal = cameraRef.current.position.clone().normalize();
         spawnVerificationAtPoint(centerPoint, normal, preset.primaryColor);
       }
@@ -984,6 +1011,18 @@ export const HyperCoreCanvas3D: React.FC = () => {
       ...prev,
       [param]: val
     }));
+  };
+
+  const handleStepParam = (param: keyof CurveParams, deltaVal: number, minVal: number, maxVal: number) => {
+    setSelectedChain('CUSTOM');
+    setParams((prev) => {
+      const next = Math.min(maxVal, Math.max(minVal, Number((prev[param] + deltaVal).toFixed(2))));
+      return {
+        ...prev,
+        [param]: next
+      };
+    });
+    spatialAudio.playClick(950);
   };
 
   const handleSelectMaterial = (type: MaterialType) => {
@@ -1025,7 +1064,8 @@ export const HyperCoreCanvas3D: React.FC = () => {
     if (controlsRef.current && cameraRef.current) {
       controlsRef.current.reset();
       cameraRef.current.position.set(0, 0, 7.5);
-      cameraRef.current.lookAt(0, 0, 0);
+      controlsRef.current.target.set(offsetXLerpRef.current, 0, 0);
+      cameraRef.current.lookAt(offsetXLerpRef.current, 0, 0);
       spatialAudio.playClick(900);
     }
   };
@@ -1092,39 +1132,43 @@ export const HyperCoreCanvas3D: React.FC = () => {
         </div>
       ))}
 
-      {/* Structured Floating Spatial HUD Header (2 Clean Tiers, zero overlap) */}
-      <div className="absolute top-4 left-4 right-4 z-20 pointer-events-none flex flex-col gap-2">
+      {/* Top Floating HUD: Responsive layout that smoothly leaves room when Formula Lab is docked */}
+      <div
+        className={`absolute top-4 left-4 z-20 pointer-events-none flex flex-col gap-2 transition-all duration-300 ${
+          isLabOpen ? 'right-4 sm:right-[345px]' : 'right-4'
+        }`}
+      >
         {/* Tier 1: Primary Controls */}
         <div className="flex items-center justify-between gap-2">
           {/* Left: Chain Badge & Formula Lab Toggle */}
           <div className="flex items-center gap-2 pointer-events-auto">
-            <div className="flex items-center gap-2 bg-black/80 backdrop-blur-xl border border-white/15 px-3.5 py-1.5 rounded-full text-xs text-white shadow-lg">
+            <div className="flex items-center gap-2 bg-black/80 backdrop-blur-xl border border-white/15 px-3 py-1.5 rounded-full text-xs text-white shadow-lg">
               <span
-                className="w-2.5 h-2.5 rounded-full animate-pulse"
+                className="w-2.5 h-2.5 rounded-full animate-pulse shrink-0"
                 style={{ backgroundColor: activeChainMeta.primaryHex }}
               ></span>
-              <span className="font-bold tracking-wider font-mono">{activeChainMeta.name}</span>
-              <span className="text-white/30 hidden sm:inline">|</span>
-              <span className="font-mono text-[11px] font-semibold hidden sm:inline" style={{ color: activeChainMeta.primaryHex }}>
+              <span className="font-bold tracking-wider font-mono text-xs truncate max-w-[120px] sm:max-w-none">
+                {activeChainMeta.name}
+              </span>
+              <span className="text-white/30 hidden md:inline">|</span>
+              <span className="font-mono text-[11px] font-semibold hidden md:inline" style={{ color: activeChainMeta.primaryHex }}>
                 {activeChainMeta.badge}
               </span>
             </div>
 
-            <button
-              onClick={() => {
-                setIsLabOpen((prev) => !prev);
-                spatialAudio.playClick(1100);
-              }}
-              className={`flex items-center gap-1.5 font-mono px-3.5 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer ${
-                isLabOpen
-                  ? 'bg-cyan-500 text-black border-cyan-400 shadow-xl shadow-cyan-500/30 scale-[1.03]'
-                  : 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 hover:text-white border-cyan-500/40 hover:border-cyan-300 shadow-lg shadow-cyan-500/10'
-              }`}
-              title="Toggle Live Formula Lab"
-            >
-              <FlaskConical className={`w-3.5 h-3.5 ${isLabOpen ? 'animate-bounce' : ''}`} />
-              <span>FORMULA_LAB</span>
-            </button>
+            {!isLabOpen && (
+              <button
+                onClick={() => {
+                  setIsLabOpen(true);
+                  spatialAudio.playClick(1100);
+                }}
+                className="flex items-center gap-1.5 font-mono px-3.5 py-1.5 rounded-full text-xs font-bold transition-all border cursor-pointer bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 hover:text-white border-cyan-500/40 hover:border-cyan-300 shadow-lg shadow-cyan-500/10"
+                title="Open Live Formula Lab (Docked Sidebar)"
+              >
+                <FlaskConical className="w-3.5 h-3.5" />
+                <span>FORMULA_LAB</span>
+              </button>
+            )}
           </div>
 
           {/* Right: Exploded View & Reset */}
@@ -1144,7 +1188,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
               title="Toggle Exploded Layer Decomposition"
             >
               <Layers className={`w-3.5 h-3.5 ${isExploded ? 'animate-pulse' : ''}`} />
-              <span>{isExploded ? 'COLLAPSE' : 'EXPLODED'}</span>
+              <span className="hidden sm:inline">{isExploded ? 'COLLAPSE' : 'EXPLODED'}</span>
             </button>
 
             <button
@@ -1153,7 +1197,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
               title="Reset Camera Angle"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">RESET</span>
+              <span className="hidden md:inline">RESET</span>
             </button>
           </div>
         </div>
@@ -1163,7 +1207,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
           {/* Active Formula Pill */}
           <div className="flex items-center gap-2 bg-black/75 backdrop-blur-xl border border-white/15 px-3 py-1 rounded-xl text-xs font-mono text-gray-300 shadow-md">
             <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-            <span className="font-bold text-white tracking-wide text-[11px]">{activeChainMeta.formula}</span>
+            <span className="font-bold text-white tracking-wide text-[11px] truncate max-w-[170px] sm:max-w-none">
+              {activeChainMeta.formula}
+            </span>
             <span className="text-white/20">|</span>
             <span
               className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
@@ -1177,7 +1223,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
           </div>
 
           {/* Helper Hint */}
-          <div className="hidden lg:flex items-center gap-1.5 bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1 rounded-xl text-[11px] text-gray-300 font-mono">
+          <div className="hidden xl:flex items-center gap-1.5 bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1 rounded-xl text-[11px] text-gray-300 font-mono">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             <span>ЛКМ клик: аудит узла • Вращение 360° • Зум</span>
           </div>
@@ -1186,7 +1232,11 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
       {/* Exploded View Floating Layer Annotations */}
       {isExploded && (
-        <div className="absolute top-24 right-4 z-20 pointer-events-none hidden sm:flex flex-col gap-1.5 font-mono text-[10px]">
+        <div
+          className={`absolute top-24 z-20 pointer-events-none hidden sm:flex flex-col gap-1.5 font-mono text-[10px] transition-all duration-300 ${
+            isLabOpen ? 'right-[345px]' : 'right-4'
+          }`}
+        >
           <div className="bg-black/85 backdrop-blur-md border border-cyan-400/50 px-3 py-1.5 rounded-xl text-cyan-300 flex items-center gap-2 shadow-lg shadow-cyan-500/10 animate-in fade-in slide-in-from-right-3 duration-300">
             <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
             <span>LAYER 01: MANIFOLD_SHELL [+42% RADIAL]</span>
@@ -1202,303 +1252,302 @@ export const HyperCoreCanvas3D: React.FC = () => {
         </div>
       )}
 
-      {/* Interactive Formula Lab Cybernetic Drawer (Draggable parameter sliders + real-time discriminant) */}
+      {/* DOCKED SIDEBAR: Formula Lab Inspector on the Right (Leaves 3D curve 100% visible on the left!) */}
       {isLabOpen && (
         <div
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-16 left-4 right-4 sm:right-auto sm:w-[480px] max-h-[82%] overflow-y-auto z-40 bg-[#060a14]/95 backdrop-blur-2xl border border-cyan-400/40 p-3.5 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.85)] font-mono text-xs text-gray-200 animate-in fade-in zoom-in-95 duration-200"
+          className="absolute top-3 bottom-3 right-3 w-full sm:w-[325px] max-h-[calc(100%-24px)] overflow-y-auto z-40 bg-[#050814]/92 backdrop-blur-2xl border border-cyan-400/35 p-3 rounded-2xl shadow-[-12px_0_40px_rgba(0,0,0,0.85)] font-mono text-xs text-gray-200 animate-in fade-in slide-in-from-right-6 duration-300 flex flex-col justify-between"
         >
-          {/* Header */}
-          <div className="flex items-center justify-between pb-2 border-b border-white/10">
-            <div className="flex items-center gap-2">
-              <div className="p-1 rounded-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-                <FlaskConical className="w-3.5 h-3.5" />
-              </div>
-              <div>
-                <div className="font-bold text-white text-xs sm:text-sm tracking-wide flex items-center gap-2">
-                  FORMULA LAB // CRYPTO CURVES
+          <div>
+            {/* Header */}
+            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <div className="p-1 rounded-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                  <FlaskConical className="w-3.5 h-3.5" />
                 </div>
-                <div className="text-[9px] text-cyan-400/80">Real-Time Parametric GPU Morphing (&lt; 2ms)</div>
+                <div>
+                  <div className="font-bold text-white text-xs tracking-wide flex items-center gap-1.5">
+                    <span>FORMULA LAB</span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                      GPU &lt; 2ms
+                    </span>
+                  </div>
+                  <div className="text-[8.5px] text-gray-400">Live Parametric Inspector</div>
+                </div>
               </div>
-            </div>
-            <button
-              onClick={() => setIsLabOpen(false)}
-              className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
-              title="Close Formula Lab"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Live Equation Display Banner */}
-          <div className="mt-2 p-2 rounded-xl bg-black/60 border border-white/10 flex flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[9px] text-gray-400 uppercase tracking-wider">ACTIVE ELLIPTIC EQUATION:</span>
-              <span className="text-[9px] text-cyan-400 font-bold">WEIERSTRASS / EDWARDS</span>
-            </div>
-            <div className="text-sm sm:text-base font-bold text-white tracking-wide py-1 text-center bg-white/5 rounded-lg border border-white/5">
-              <span className="text-emerald-400">y²</span> = <span className="text-cyan-400">x³</span>
-              {params.a !== 0 && (
-                <> {params.a > 0 ? '+ ' : '- '}
-                  <span className="text-amber-300 font-extrabold">{Math.abs(params.a) === 1 ? '' : Math.abs(params.a)}</span>
-                  <span className="text-cyan-400">x</span>
-                </>
-              )}
-              {params.b !== 0 && (
-                <> {params.b > 0 ? '+ ' : '- '}
-                  <span className="text-purple-300 font-extrabold">{Math.abs(params.b)}</span>
-                </>
-              )}
-              <span className="text-gray-400 text-xs font-normal"> (mod p)</span>
-            </div>
-
-            {/* Discriminant & Invariant Alert */}
-            <div className="mt-0.5 pt-1.5 border-t border-white/10 flex flex-col gap-1 text-[10px]">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-400">Discriminant Δ = -16(4a³ + 27b²):</span>
-                <span className={`font-bold ${isSingular ? 'text-rose-400' : 'text-emerald-400'}`}>
-                  {discriminant.toLocaleString()}
-                </span>
-              </div>
-              <div
-                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[9px] sm:text-[10px] font-bold ${
-                  isSingular
-                    ? 'bg-rose-500/20 border-rose-500/40 text-rose-300 animate-pulse'
-                    : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                }`}
-              >
-                {isSingular ? (
-                  <>
-                    <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                    <span>⚠ SINGULAR CURVE: Cusp / Self-Intersection (Discrete Log Insecure)</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span>✓ NON-SINGULAR: Smooth Abelian Group (Hard ECDSA / Pairing Invariant)</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Presets Grid */}
-          <div className="mt-2">
-            <div className="text-[9px] text-gray-400 mb-1 uppercase tracking-wider flex items-center justify-between">
-              <span>LOAD BLOCKCHAIN PRESET:</span>
-              <span className="text-[9px] text-white/40">1-CLICK</span>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {(Object.keys(CHAIN_PRESETS) as Array<Exclude<ChainKey, 'CUSTOM'>>).map((key) => {
-                const preset = CHAIN_PRESETS[key];
-                const isCurrent = selectedChain === key;
-                return (
-                  <button
-                    key={key}
-                    onClick={() => handleSelectChain(key)}
-                    className={`px-2 py-1 rounded-lg border text-left transition-all cursor-pointer ${
-                      isCurrent
-                        ? 'bg-cyan-500/25 border-cyan-400 text-white shadow-sm'
-                        : 'bg-white/5 border-white/10 hover:bg-white/10 text-gray-300 hover:text-white'
-                    }`}
-                  >
-                    <div className="font-bold text-[10px] truncate flex items-center justify-between">
-                      <span>{preset.shortName}</span>
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: preset.primaryHex }}></span>
-                    </div>
-                    <div className="text-[8.5px] text-gray-400 truncate">{preset.badge}</div>
-                  </button>
-                );
-              })}
-              {/* Singularity test preset button */}
               <button
-                onClick={() => {
-                  setSelectedChain('CUSTOM');
-                  setParams({ a: 0, b: 0, p: 3, q: 7, twist: 1.0, tubeRadius: 0.42 });
-                  spatialAudio.playClick(600);
-                }}
-                className="col-span-2 px-2 py-1 rounded-lg border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-left transition-all cursor-pointer flex items-center justify-between"
-                title="Simulate Singular Cusp Singularity (a=0, b=0)"
+                onClick={() => setIsLabOpen(false)}
+                className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                title="Close Inspector"
               >
-                <span className="text-[9.5px] font-bold">⚡ Simulate Cusp: y² = x³ (a=0, b=0, Δ=0)</span>
-                <span className="text-[8.5px] text-rose-400 font-mono">[COLLAPSE]</span>
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
+
+            {/* Live Equation Display Banner */}
+            <div className="mt-2 p-2 rounded-xl bg-black/60 border border-white/10 flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[8.5px] text-gray-400 uppercase tracking-wider">ACTIVE FORMULA:</span>
+                <span className="text-[8.5px] text-cyan-400 font-bold">WEIERSTRASS</span>
+              </div>
+              <div className="text-sm font-bold text-white tracking-wide py-1 text-center bg-white/5 rounded-lg border border-white/5 font-mono">
+                <span className="text-emerald-400">y²</span> = <span className="text-cyan-400">x³</span>
+                {params.a !== 0 && (
+                  <> {params.a > 0 ? '+ ' : '- '}
+                    <span className="text-amber-300 font-extrabold">{Math.abs(params.a) === 1 ? '' : Math.abs(params.a)}</span>
+                    <span className="text-cyan-400">x</span>
+                  </>
+                )}
+                {params.b !== 0 && (
+                  <> {params.b > 0 ? '+ ' : '- '}
+                    <span className="text-purple-300 font-extrabold">{Math.abs(params.b)}</span>
+                  </>
+                )}
+                <span className="text-gray-400 text-xs font-normal"> (mod p)</span>
+              </div>
+
+              {/* Discriminant & Invariant Alert */}
+              <div className="mt-0.5 pt-1 border-t border-white/10 flex flex-col gap-1 text-[9.5px]">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400">Discriminant Δ = -16(4a³+27b²):</span>
+                  <span className={`font-bold font-mono ${isSingular ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    {discriminant.toLocaleString()}
+                  </span>
+                </div>
+                <div
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[8.5px] font-bold ${
+                    isSingular
+                      ? 'bg-rose-500/20 border-rose-500/40 text-rose-300 animate-pulse'
+                      : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                  }`}
+                >
+                  {isSingular ? (
+                    <>
+                      <AlertCircle className="w-3 h-3 text-rose-400 shrink-0" />
+                      <span>⚠ SINGULAR: Cusp Degeneracy (Insecure)</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                      <span>✓ NON-SINGULAR: Hard Discrete Log Group</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Presets Grid */}
+            <div className="mt-2">
+              <div className="text-[8.5px] text-gray-400 mb-1 uppercase tracking-wider flex items-center justify-between">
+                <span>LOAD PRESET:</span>
+                <span className="text-[8px] text-cyan-400">CLICK TO APPLY</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                {(Object.keys(CHAIN_PRESETS) as Array<Exclude<ChainKey, 'CUSTOM'>>).map((key) => {
+                  const preset = CHAIN_PRESETS[key];
+                  const isCurrent = selectedChain === key;
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => handleSelectChain(key)}
+                      className={`px-2 py-1 rounded-lg border text-left transition-all cursor-pointer ${
+                        isCurrent
+                          ? 'bg-cyan-500/25 border-cyan-400 text-white shadow-sm'
+                          : 'bg-white/5 border-white/10 hover:bg-white/10 text-gray-300 hover:text-white'
+                      }`}
+                    >
+                      <div className="font-bold text-[9.5px] truncate flex items-center justify-between">
+                        <span>{preset.shortName}</span>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: preset.primaryHex }}></span>
+                      </div>
+                      <div className="text-[8px] text-gray-400 truncate">{preset.badge}</div>
+                    </button>
+                  );
+                })}
+                {/* Singularity test preset button */}
+                <button
+                  onClick={() => {
+                    setSelectedChain('CUSTOM');
+                    setParams({ a: 0, b: 0, p: 3, q: 7, twist: 1.0, tubeRadius: 0.42 });
+                    spatialAudio.playClick(600);
+                  }}
+                  className="col-span-2 px-2 py-0.5 rounded-lg border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 text-left transition-all cursor-pointer flex items-center justify-between"
+                  title="Simulate Singular Cusp Singularity (a=0, b=0)"
+                >
+                  <span className="text-[8.5px] font-bold">⚡ Simulate Cusp: a=0, b=0 (Δ=0)</span>
+                  <span className="text-[8px] text-rose-400 font-mono">[COLLAPSE]</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Live Sliders Controls */}
+            <div className="mt-2 space-y-1.5">
+              <div className="text-[8.5px] text-gray-400 uppercase tracking-wider flex items-center justify-between border-b border-white/10 pb-0.5">
+                <span>PARAMETRIC SLIDERS:</span>
+                <span className="text-[8.5px] text-cyan-400 flex items-center gap-1">
+                  <SlidersHorizontal className="w-2.5 h-2.5" />
+                  LIVE GPU MORPH
+                </span>
+              </div>
+
+              {/* Slider 1: Parameter a */}
+              <div className="bg-white/5 p-1.5 rounded-xl border border-white/5">
+                <div className="flex items-center justify-between text-[10px] mb-0.5">
+                  <span className="text-gray-300">Param a (Meridian):</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleStepParam('a', -0.5, -10, 10)}
+                      className="w-4 h-4 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-[10px] text-gray-300 hover:text-white"
+                    >
+                      <Minus className="w-2.5 h-2.5" />
+                    </button>
+                    <span className="text-amber-300 font-bold font-mono min-w-[28px] text-center">{params.a}</span>
+                    <button
+                      onClick={() => handleStepParam('a', 0.5, -10, 10)}
+                      className="w-4 h-4 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-[10px] text-gray-300 hover:text-white"
+                    >
+                      <Plus className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="-10"
+                  max="10"
+                  step="0.5"
+                  value={params.a}
+                  onChange={(e) => handleParamChange('a', parseFloat(e.target.value))}
+                  className="w-full h-1 accent-amber-400 cursor-pointer"
+                />
+              </div>
+
+              {/* Slider 2: Parameter b */}
+              <div className="bg-white/5 p-1.5 rounded-xl border border-white/5">
+                <div className="flex items-center justify-between text-[10px] mb-0.5">
+                  <span className="text-gray-300">Param b (Toroid):</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleStepParam('b', -0.5, -10, 20)}
+                      className="w-4 h-4 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-[10px] text-gray-300 hover:text-white"
+                    >
+                      <Minus className="w-2.5 h-2.5" />
+                    </button>
+                    <span className="text-purple-300 font-bold font-mono min-w-[28px] text-center">{params.b}</span>
+                    <button
+                      onClick={() => handleStepParam('b', 0.5, -10, 20)}
+                      className="w-4 h-4 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-[10px] text-gray-300 hover:text-white"
+                    >
+                      <Plus className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="-10"
+                  max="20"
+                  step="0.5"
+                  value={params.b}
+                  onChange={(e) => handleParamChange('b', parseFloat(e.target.value))}
+                  className="w-full h-1 accent-purple-400 cursor-pointer"
+                />
+              </div>
+
+              {/* Sliders p & q */}
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="bg-white/5 p-1.5 rounded-xl border border-white/5">
+                  <div className="flex items-center justify-between text-[9.5px] mb-0.5">
+                    <span className="text-gray-300">Winding p:</span>
+                    <span className="text-cyan-400 font-bold font-mono">{params.p}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="8"
+                    step="1"
+                    value={params.p}
+                    onChange={(e) => handleParamChange('p', parseInt(e.target.value))}
+                    className="w-full h-1 accent-cyan-400 cursor-pointer"
+                  />
+                </div>
+
+                <div className="bg-white/5 p-1.5 rounded-xl border border-white/5">
+                  <div className="flex items-center justify-between text-[9.5px] mb-0.5">
+                    <span className="text-gray-300">Winding q:</span>
+                    <span className="text-cyan-400 font-bold font-mono">{params.q}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="12"
+                    step="1"
+                    value={params.q}
+                    onChange={(e) => handleParamChange('q', parseInt(e.target.value))}
+                    className="w-full h-1 accent-cyan-400 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              {/* Sliders Twist & Tube Radius */}
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="bg-white/5 p-1.5 rounded-xl border border-white/5">
+                  <div className="flex items-center justify-between text-[9.5px] mb-0.5">
+                    <span className="text-gray-300">Twist τ:</span>
+                    <span className="text-emerald-400 font-bold font-mono">{params.twist}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="3.0"
+                    step="0.1"
+                    value={params.twist}
+                    onChange={(e) => handleParamChange('twist', parseFloat(e.target.value))}
+                    className="w-full h-1 accent-emerald-400 cursor-pointer"
+                  />
+                </div>
+
+                <div className="bg-white/5 p-1.5 rounded-xl border border-white/5">
+                  <div className="flex items-center justify-between text-[9.5px] mb-0.5">
+                    <span className="text-gray-300">Caliber r:</span>
+                    <span className="text-emerald-400 font-bold font-mono">{params.tubeRadius}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.15"
+                    max="0.55"
+                    step="0.02"
+                    value={params.tubeRadius}
+                    onChange={(e) => handleParamChange('tubeRadius', parseFloat(e.target.value))}
+                    className="w-full h-1 accent-emerald-400 cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Live Sliders Controls */}
-          <div className="mt-2.5 space-y-2">
-            <div className="text-[9px] text-gray-400 uppercase tracking-wider flex items-center justify-between border-b border-white/10 pb-1">
-              <span>PARAMETRIC CONTROLS:</span>
-              <span className="text-[9px] text-cyan-400 flex items-center gap-1">
-                <SlidersHorizontal className="w-3 h-3" />
-                DRAG TO MORPH
-              </span>
-            </div>
-
-            {/* Slider: Weierstrass a */}
-            <div className="bg-white/5 p-2 rounded-xl border border-white/5">
-              <div className="flex items-center justify-between text-[11px] mb-1">
-                <span className="text-gray-300">Parameter a (Meridian Harmonics):</span>
-                <span className="text-amber-300 font-bold font-mono">{params.a}</span>
-              </div>
-              <input
-                type="range"
-                min="-10"
-                max="10"
-                step="0.5"
-                value={params.a}
-                onChange={(e) => handleParamChange('a', parseFloat(e.target.value))}
-                className="w-full accent-amber-400 cursor-pointer"
-              />
-            </div>
-
-            {/* Slider: Weierstrass b */}
-            <div className="bg-white/5 p-2 rounded-xl border border-white/5">
-              <div className="flex items-center justify-between text-[11px] mb-1">
-                <span className="text-gray-300">Parameter b (Toroidal Breathing):</span>
-                <span className="text-purple-300 font-bold font-mono">{params.b}</span>
-              </div>
-              <input
-                type="range"
-                min="-10"
-                max="20"
-                step="0.5"
-                value={params.b}
-                onChange={(e) => handleParamChange('b', parseFloat(e.target.value))}
-                className="w-full accent-purple-400 cursor-pointer"
-              />
-            </div>
-
-            {/* Grid for p and q */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-white/5 p-2 rounded-xl border border-white/5">
-                <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="text-gray-300">Windings p (Petals):</span>
-                  <span className="text-cyan-400 font-bold font-mono">{params.p}</span>
-                </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="8"
-                  step="1"
-                  value={params.p}
-                  onChange={(e) => handleParamChange('p', parseInt(e.target.value))}
-                  className="w-full accent-cyan-400 cursor-pointer"
-                />
-              </div>
-
-              <div className="bg-white/5 p-2 rounded-xl border border-white/5">
-                <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="text-gray-300">Windings q (Loops):</span>
-                  <span className="text-cyan-400 font-bold font-mono">{params.q}</span>
-                </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="12"
-                  step="1"
-                  value={params.q}
-                  onChange={(e) => handleParamChange('q', parseInt(e.target.value))}
-                  className="w-full accent-cyan-400 cursor-pointer"
-                />
-              </div>
-            </div>
-
-            {/* Grid for Twist and Tube Radius */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-white/5 p-2 rounded-xl border border-white/5">
-                <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="text-gray-300">Twist τ (Phase):</span>
-                  <span className="text-emerald-400 font-bold font-mono">{params.twist}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="3.0"
-                  step="0.1"
-                  value={params.twist}
-                  onChange={(e) => handleParamChange('twist', parseFloat(e.target.value))}
-                  className="w-full accent-emerald-400 cursor-pointer"
-                />
-              </div>
-
-              <div className="bg-white/5 p-2 rounded-xl border border-white/5">
-                <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="text-gray-300">Caliber r (Thickness):</span>
-                  <span className="text-emerald-400 font-bold font-mono">{params.tubeRadius}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.15"
-                  max="0.55"
-                  step="0.02"
-                  value={params.tubeRadius}
-                  onChange={(e) => handleParamChange('tubeRadius', parseFloat(e.target.value))}
-                  className="w-full accent-emerald-400 cursor-pointer"
-                />
-              </div>
-            </div>
+          <div className="pt-2 border-t border-white/10 text-[8px] text-gray-400 flex items-center justify-between">
+            <span>3D Mesh dynamically shifted to viewport center</span>
+            <span className="text-cyan-400">60 FPS</span>
           </div>
         </div>
       )}
 
-      {/* Bottom Interactive Control Center: Blockchain Curves & Materials */}
-      <div className="absolute bottom-4 left-4 right-4 z-20 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-black/85 backdrop-blur-2xl border border-white/15 p-3 rounded-2xl">
-        {/* Blockchain Cryptographic Curve Switcher */}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
-          <span className="text-white/50 text-[11px] mr-1 hidden sm:inline">BLOCKCHAIN_CURVE:</span>
-          {(Object.keys(CHAIN_PRESETS) as Array<Exclude<ChainKey, 'CUSTOM'>>).map((key) => {
-            const item = CHAIN_PRESETS[key];
-            const Icon = item.icon;
-            const isActive = selectedChain === key;
-            return (
-              <button
-                key={item.id}
-                onClick={() => handleSelectChain(item.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer text-xs ${
-                  isActive
-                    ? 'text-black font-bold shadow-lg scale-[1.02]'
-                    : 'bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
-                }`}
-                style={{
-                  background: isActive
-                    ? `linear-gradient(135deg, ${item.primaryHex}, ${item.secondaryHex})`
-                    : undefined
-                }}
-              >
-                <Icon className="w-3.5 h-3.5 shrink-0" />
-                <span>{item.shortName}</span>
-              </button>
-            );
-          })}
+      {/* Bottom Interactive Control Center */}
+      {isLabOpen ? (
+        /* Compact Floating Dock when Formula Lab is open: Maximizes 3D view area */
+        <div className="absolute bottom-3 left-3 z-20 flex items-center gap-2 bg-[#050814]/90 backdrop-blur-2xl border border-white/15 p-1.5 px-2.5 rounded-2xl shadow-xl font-mono text-xs animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="flex items-center gap-1.5 text-gray-400 text-[11px] pr-2 border-r border-white/10">
+            <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: activeChainMeta.primaryHex }} />
+            <span className="text-white font-bold">{activeChainMeta.shortName}</span>
+          </div>
 
-          {/* Custom Lab Tab */}
-          <button
-            onClick={() => {
-              setIsLabOpen(true);
-              spatialAudio.playClick(1050);
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer text-xs ${
-              selectedChain === 'CUSTOM'
-                ? 'bg-gradient-to-r from-amber-400 to-rose-400 text-black font-bold shadow-lg shadow-amber-500/20 scale-[1.02]'
-                : 'bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
-            }`}
-          >
-            <FlaskConical className="w-3.5 h-3.5 shrink-0 text-amber-400" />
-            <span>Custom Lab 🧪</span>
-          </button>
-        </div>
-
-        {/* Material & Spin Controls */}
-        <div className="flex items-center gap-2 self-end md:self-auto text-xs font-mono">
-          <div className="flex items-center bg-white/5 p-1 rounded-xl border border-white/10">
+          {/* Material Switcher */}
+          <div className="flex items-center bg-white/5 p-0.5 rounded-xl border border-white/10">
             {(['LIQUID_CHROME', 'HOLO_WIREFRAME', 'IRIDESCENT_GLASS'] as MaterialType[]).map((mat) => (
               <button
                 key={mat}
                 onClick={() => handleSelectMaterial(mat)}
-                className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer text-[11px] ${
+                className={`px-2 py-0.5 rounded-lg transition-all cursor-pointer text-[10px] ${
                   materialType === mat
                     ? 'bg-white/20 text-white font-bold'
                     : 'text-gray-400 hover:text-white'
@@ -1509,19 +1558,99 @@ export const HyperCoreCanvas3D: React.FC = () => {
             ))}
           </div>
 
+          {/* Orbit auto-rotation toggle */}
           <button
             onClick={() => setIsRotating(!isRotating)}
-            className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+            className={`p-1 rounded-xl border transition-colors cursor-pointer ${
               isRotating
                 ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
                 : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
             }`}
             title="Toggle Auto-Rotation"
           >
-            <Orbit className={`w-4 h-4 ${isRotating ? 'animate-spin' : ''}`} />
+            <Orbit className={`w-3.5 h-3.5 ${isRotating ? 'animate-spin' : ''}`} />
           </button>
         </div>
-      </div>
+      ) : (
+        /* Full Expanded Dock when Formula Lab is closed */
+        <div className="absolute bottom-3 left-3 right-3 z-20 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 bg-black/85 backdrop-blur-2xl border border-white/15 p-2.5 rounded-2xl transition-all duration-300">
+          {/* Blockchain Cryptographic Curve Switcher */}
+          <div className="flex flex-wrap items-center gap-1 text-xs font-mono">
+            <span className="text-white/50 text-[10px] mr-1 hidden sm:inline">CHAIN_CURVE:</span>
+            {(Object.keys(CHAIN_PRESETS) as Array<Exclude<ChainKey, 'CUSTOM'>>).map((key) => {
+              const item = CHAIN_PRESETS[key];
+              const Icon = item.icon;
+              const isActive = selectedChain === key;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => handleSelectChain(item.id)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer text-xs ${
+                    isActive
+                      ? 'text-black font-bold shadow-lg scale-[1.02]'
+                      : 'bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
+                  }`}
+                  style={{
+                    background: isActive
+                      ? `linear-gradient(135deg, ${item.primaryHex}, ${item.secondaryHex})`
+                      : undefined
+                  }}
+                >
+                  <Icon className="w-3 h-3 shrink-0" />
+                  <span>{item.shortName}</span>
+                </button>
+              );
+            })}
+
+            {/* Custom Lab Tab */}
+            <button
+              onClick={() => {
+                setIsLabOpen(true);
+                spatialAudio.playClick(1050);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer text-xs ${
+                selectedChain === 'CUSTOM'
+                  ? 'bg-gradient-to-r from-amber-400 to-rose-400 text-black font-bold shadow-lg shadow-amber-500/20 scale-[1.02]'
+                  : 'bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
+              }`}
+            >
+              <FlaskConical className="w-3 h-3 shrink-0 text-amber-400" />
+              <span>Custom Lab 🧪</span>
+            </button>
+          </div>
+
+          {/* Material & Spin Controls */}
+          <div className="flex items-center gap-2 self-end md:self-auto text-xs font-mono">
+            <div className="flex items-center bg-white/5 p-1 rounded-xl border border-white/10">
+              {(['LIQUID_CHROME', 'HOLO_WIREFRAME', 'IRIDESCENT_GLASS'] as MaterialType[]).map((mat) => (
+                <button
+                  key={mat}
+                  onClick={() => handleSelectMaterial(mat)}
+                  className={`px-2 py-0.5 rounded-lg transition-all cursor-pointer text-[10px] ${
+                    materialType === mat
+                      ? 'bg-white/20 text-white font-bold'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {mat === 'LIQUID_CHROME' ? 'Chrome' : mat === 'HOLO_WIREFRAME' ? 'Holo' : 'Glass'}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setIsRotating(!isRotating)}
+              className={`p-1.5 rounded-xl border transition-colors cursor-pointer ${
+                isRotating
+                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                  : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
+              }`}
+              title="Toggle Auto-Rotation"
+            >
+              <Orbit className={`w-3.5 h-3.5 ${isRotating ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
