@@ -149,9 +149,14 @@ export const HyperCoreCanvas3D: React.FC = () => {
   // Dynamic lights
   const pointLight1Ref = useRef<THREE.PointLight | null>(null);
   const pointLight2Ref = useRef<THREE.PointLight | null>(null);
+  const rimLightRef = useRef<THREE.PointLight | null>(null);
   const centerGlowLightRef = useRef<THREE.PointLight | null>(null);
   const ringMesh1Ref = useRef<THREE.Mesh | null>(null);
   const ringMesh2Ref = useRef<THREE.Mesh | null>(null);
+
+  // Dynamic quantum photon nodes & curve reference for silky kinetic flow
+  const currentCurveRef = useRef<BlockchainCryptographicCurve | null>(null);
+  const flowingNodesRef = useRef<THREE.Mesh[]>([]);
 
   // Active verification effects pool
   const activeVerificationsRef = useRef<ActiveVerification[]>([]);
@@ -188,49 +193,73 @@ export const HyperCoreCanvas3D: React.FC = () => {
         ]
       };
 
-  // Three.js Material Factory
+  // ELEGANT LUXURY THREE.JS MATERIAL FACTORY (No harsh wireframe grids, no spiky crosses!)
   const createMaterials = (c1: number, c2: number, matType: MaterialType) => {
     let mainMaterial: THREE.Material;
 
     if (matType === 'IRIDESCENT_GLASS') {
+      // Quantum Refractive Glass: Crystal clarity with deep chromatic attenuation
       mainMaterial = new THREE.MeshPhysicalMaterial({
-        color: c1,
-        emissive: c2,
-        emissiveIntensity: 0.22,
-        roughness: 0.1,
-        metalness: 0.15,
-        transmission: 0.88,
-        ior: 1.52,
+        color: 0xffffff,
+        emissive: c1,
+        emissiveIntensity: 0.12,
+        roughness: 0.04,
+        metalness: 0.02,
+        transmission: 0.94,
+        ior: 1.68,
+        thickness: 1.45,
         transparent: true,
-        opacity: 0.82
+        opacity: 0.96,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.03,
+        attenuationColor: new THREE.Color(c1),
+        attenuationDistance: 1.15
       });
     } else if (matType === 'HOLO_WIREFRAME') {
-      mainMaterial = new THREE.MeshStandardMaterial({
-        color: c1,
+      // Cyber Silk: Deep obsidian satin with luminous edge luster
+      mainMaterial = new THREE.MeshPhysicalMaterial({
+        color: 0x060912,
         emissive: c2,
-        emissiveIntensity: 0.65,
-        roughness: 0.2,
-        metalness: 0.9,
-        wireframe: true
+        emissiveIntensity: 0.36,
+        roughness: 0.12,
+        metalness: 0.88,
+        reflectivity: 0.9,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.06
       });
     } else {
-      mainMaterial = new THREE.MeshStandardMaterial({
-        color: c1,
-        emissive: c2,
-        emissiveIntensity: 0.18,
-        roughness: 0.18,
-        metalness: 0.88
+      // LIQUID_CHROME: Fluid Obsidian Titanium with Iridescent Specular Glint
+      mainMaterial = new THREE.MeshPhysicalMaterial({
+        color: 0x0a0f1c,
+        emissive: c1,
+        emissiveIntensity: 0.14,
+        roughness: 0.05,
+        metalness: 0.96,
+        reflectivity: 0.98,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.04,
+        iridescence: 0.82,
+        iridescenceIOR: 1.48
       });
     }
 
-    const wireframeMat = new THREE.MeshBasicMaterial({
-      color: c2,
-      wireframe: true,
+    // Inner Laser Spine Core
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
       transparent: true,
-      opacity: 0.14
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending
     });
 
-    return { main: mainMaterial, wireframe: wireframeMat };
+    // Luminous Quantum Photon Beads (Silky glowing spheres, replacing ugly crosses)
+    const photonMat = new THREE.MeshBasicMaterial({
+      color: c2,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending
+    });
+
+    return { main: mainMaterial, core: coreMat, photon: photonMat };
   };
 
   // Spawn Verification Shockwave
@@ -375,13 +404,15 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
     const group = new THREE.Group();
     const curve = new BlockchainCryptographicCurve(p.a, p.b, p.p, p.q, p.twist, 1.65);
+    currentCurveRef.current = curve;
     const mats = createMaterials(color1, color2, matType);
 
-    // LAYER 1: Solid Main Manifold Shell
+    // LAYER 1: Silky-Smooth Organic Manifold Shell (High Precision Geometry)
     const shellGroup = new THREE.Group();
-    const tubularSegments = 260;
-    const radialSegments = 24;
+    const tubularSegments = 360;
+    const radialSegments = 48;
     const geom = new THREE.TubeGeometry(curve, tubularSegments, p.tubeRadius, radialSegments, true);
+    geom.computeVertexNormals();
 
     // Bounding sphere calculation
     geom.computeBoundingSphere();
@@ -399,45 +430,32 @@ export const HyperCoreCanvas3D: React.FC = () => {
     mainMesh.castShadow = true;
     mainMesh.receiveShadow = true;
     shellGroup.add(mainMesh);
-
-    // Holographic lattice overlay
-    const wireGeom = new THREE.TubeGeometry(curve, tubularSegments, p.tubeRadius * 1.018, 12, true);
-    const wireMesh = new THREE.Mesh(wireGeom, mats.wireframe);
-    shellGroup.add(wireMesh);
     group.add(shellGroup);
     shellLayerRef.current = shellGroup;
 
-    // LAYER 2: Decentralized Consensus Validation Nodes
+    // LAYER 2: Flowing Quantum Data Photons (Smooth glowing spheres moving dynamically)
     const nodesGroup = new THREE.Group();
-    const nodeCount = 54;
-    const nodeGeo = new THREE.OctahedronGeometry(0.045, 0);
-    const nodeMat = new THREE.MeshBasicMaterial({
-      color: color2,
-      wireframe: false,
-      transparent: true,
-      opacity: 0.95
-    });
+    const photonCount = 36;
+    const photonGeo = new THREE.SphereGeometry(0.026, 16, 16);
+    const flowingMeshes: THREE.Mesh[] = [];
 
-    for (let i = 0; i < nodeCount; i++) {
-      const t = i / nodeCount;
+    for (let i = 0; i < photonCount; i++) {
+      const t = i / photonCount;
       const pt = curve.getPoint(t);
-      const nodeMesh = new THREE.Mesh(nodeGeo, nodeMat);
-      nodeMesh.position.copy(pt);
-      nodesGroup.add(nodeMesh);
+      const photonMesh = new THREE.Mesh(photonGeo, mats.photon);
+      photonMesh.position.copy(pt);
+      nodesGroup.add(photonMesh);
+      flowingMeshes.push(photonMesh);
     }
+    flowingNodesRef.current = flowingMeshes;
     group.add(nodesGroup);
     nodesLayerRef.current = nodesGroup;
 
-    // LAYER 3: Internal Luminous Laser Spine Core
+    // LAYER 3: Internal Luminous Laser Spine Core (Radiant glowing filament)
     const coreGroup = new THREE.Group();
-    const coreGeom = new THREE.TubeGeometry(curve, tubularSegments, p.tubeRadius * 0.22, 10, true);
-    const coreMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.88,
-      blending: THREE.AdditiveBlending
-    });
-    const coreMesh = new THREE.Mesh(coreGeom, coreMat);
+    const coreGeom = new THREE.TubeGeometry(curve, tubularSegments, p.tubeRadius * 0.18, 16, true);
+    coreGeom.computeVertexNormals();
+    const coreMesh = new THREE.Mesh(coreGeom, mats.core);
     coreGroup.add(coreMesh);
     group.add(coreGroup);
     coreLayerRef.current = coreGroup;
@@ -491,21 +509,35 @@ export const HyperCoreCanvas3D: React.FC = () => {
     controls.target.set(0, 0, 0);
     controlsRef.current = controls;
 
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
+    // 1. Soft Ambient Light
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
     scene.add(ambientLight);
 
+    // 2. Directional Key Studio Light (Crisp specular glint on chrome & crystal glass)
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
+    keyLight.position.set(6, 8, 7);
+    scene.add(keyLight);
+
+    // 3. Primary Accent Light
     const light1 = new THREE.PointLight(activeChainMeta.primaryColor, 8.5, 24);
     light1.position.set(5, 5, 5);
     scene.add(light1);
     pointLight1Ref.current = light1;
 
+    // 4. Secondary Accent Light
     const light2 = new THREE.PointLight(activeChainMeta.secondaryColor, 7.5, 24);
     light2.position.set(-5, -4, 4);
     scene.add(light2);
     pointLight2Ref.current = light2;
 
-    const centerGlow = new THREE.PointLight(activeChainMeta.primaryColor, 3.2, 10);
+    // 5. Cinematic Backlight / Rim Light (Creates radiant silhouette halo)
+    const rimLight = new THREE.PointLight(activeChainMeta.secondaryColor, 12, 26);
+    rimLight.position.set(0, 3, -6.5);
+    scene.add(rimLight);
+    rimLightRef.current = rimLight;
+
+    // 6. Center Core Glow Light
+    const centerGlow = new THREE.PointLight(activeChainMeta.primaryColor, 4.0, 12);
     centerGlow.position.set(0, 0, 0);
     scene.add(centerGlow);
     centerGlowLightRef.current = centerGlow;
@@ -620,6 +652,31 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
       if (meshGroupRef.current) {
         meshGroupRef.current.rotation.y += delta * 0.08;
+      }
+
+      // Silky Flowing Quantum Photon Stream (Dynamic data pulses along curve geodesics)
+      if (flowingNodesRef.current.length > 0 && currentCurveRef.current) {
+        const curve = currentCurveRef.current;
+        const count = flowingNodesRef.current.length;
+        const flowSpeed = 0.045;
+        for (let i = 0; i < count; i++) {
+          const t = (i / count + elapsed * flowSpeed) % 1.0;
+          const pt = curve.getPoint(t);
+          const nodeMesh = flowingNodesRef.current[i];
+          if (nodeMesh) {
+            nodeMesh.position.copy(pt);
+            const s = 1.0 + 0.22 * Math.sin(elapsed * 4.0 + i * 0.5);
+            nodeMesh.scale.set(s, s, s);
+          }
+        }
+      }
+
+      // Inner Luminous Laser Spine Core Harmonic Breathing
+      if (coreLayerRef.current && coreLayerRef.current.children[0]) {
+        const coreMesh = coreLayerRef.current.children[0] as THREE.Mesh;
+        if (coreMesh && coreMesh.material) {
+          (coreMesh.material as THREE.MeshBasicMaterial).opacity = 0.82 + 0.16 * Math.sin(elapsed * 2.8);
+        }
       }
 
       if (ringsRef.current) {
@@ -743,6 +800,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
     }
     if (ringMesh2Ref.current) {
       (ringMesh2Ref.current.material as THREE.MeshBasicMaterial).color.setHex(activeChainMeta.secondaryColor);
+    }
+    if (rimLightRef.current) {
+      rimLightRef.current.color.setHex(activeChainMeta.secondaryColor);
     }
   }, [params, selectedChain, materialType, userZoomScale]);
 
@@ -1169,7 +1229,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
                       : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  {mat === 'LIQUID_CHROME' ? 'Chrome' : mat === 'HOLO_WIREFRAME' ? 'Holo' : 'Glass'}
+                  {mat === 'LIQUID_CHROME' ? 'Liquid Chrome' : mat === 'HOLO_WIREFRAME' ? 'Cyber Silk' : 'Prism Glass'}
                 </button>
               ))}
             </div>
