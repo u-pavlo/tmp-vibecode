@@ -95,6 +95,41 @@ class SpatialAudioEngine {
     }
   }
 
+  // Mechanical Kinetic Servo Sound for Exploded View
+  public playExplode(isOpening: boolean) {
+    if (!this.isEnabled || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const filter = this.ctx.createBiquadFilter();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sawtooth';
+      const startFreq = isOpening ? 200 : 540;
+      const endFreq = isOpening ? 540 : 200;
+
+      osc.frequency.setValueAtTime(startFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, now + 0.3);
+
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1100, now);
+      filter.Q.setValueAtTime(2.5, now);
+
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.08, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.32);
+    } catch {
+      // Safe fallback
+    }
+  }
+
   // 3D Geometry Warp Shockwave Sound
   public playWarp() {
     if (!this.isEnabled || !this.ctx) return;
