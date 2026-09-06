@@ -65,7 +65,7 @@ export const PARAM_BOUNDS: Record<keyof CurveParams, { min: number; max: number;
   p: { min: 1, max: 8, step: 1 },
   q: { min: 1, max: 8, step: 1 },
   twist: { min: 0, max: 3, step: 0.05 },
-  tubeRadius: { min: 0.15, max: 0.6, step: 0.01 }
+  tubeRadius: { min: 0.04, max: 0.16, step: 0.005 }
 };
 
 export const HyperCoreCanvas3D: React.FC = () => {
@@ -223,73 +223,80 @@ export const HyperCoreCanvas3D: React.FC = () => {
         ]
       };
 
-  // ELEGANT LUXURY THREE.JS MATERIAL FACTORY (No harsh wireframe grids, no spiky crosses!)
+  // HIGH-TECH AEROSPACE & OBSIDIAN MATERIAL FACTORY (Zero jelly, precision titanium hardware)
   const createMaterials = (c1: number, c2: number, matType: MaterialType) => {
     let mainMaterial: THREE.Material;
 
     if (matType === 'IRIDESCENT_GLASS') {
-      // Quantum Refractive Glass: Crystal clarity with deep chromatic attenuation
+      // Smoked Obsidian Crystal Glass: Dark, refractive, ultra-crisp (NOT green jelly!)
       mainMaterial = new THREE.MeshPhysicalMaterial({
-        color: 0xffffff,
+        color: 0x070b14,
         emissive: c1,
-        emissiveIntensity: 0.12,
-        roughness: 0.04,
-        metalness: 0.02,
-        transmission: 0.94,
-        ior: 1.68,
-        thickness: 1.45,
+        emissiveIntensity: 0.08,
+        roughness: 0.08,
+        metalness: 0.15,
+        transmission: 0.85,
+        ior: 1.55,
+        thickness: 0.45,
         transparent: true,
-        opacity: 0.96,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.03,
+        opacity: 0.88,
+        clearcoat: 0.8,
+        clearcoatRoughness: 0.05,
         attenuationColor: new THREE.Color(c1),
-        attenuationDistance: 1.15
+        attenuationDistance: 1.6
       });
     } else if (matType === 'HOLO_WIREFRAME') {
-      // Cyber Silk: Deep obsidian satin with luminous edge luster
-      mainMaterial = new THREE.MeshPhysicalMaterial({
+      // Cyber Carbon / Stealth Matte: Dark technical aerospace carbon with subtle emissive rim
+      mainMaterial = new THREE.MeshStandardMaterial({
         color: 0x060912,
         emissive: c2,
-        emissiveIntensity: 0.36,
-        roughness: 0.12,
-        metalness: 0.88,
-        reflectivity: 0.9,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.06
+        emissiveIntensity: 0.16,
+        roughness: 0.40,
+        metalness: 0.85
       });
     } else {
-      // LIQUID_CHROME: Fluid Obsidian Titanium with Iridescent Specular Glint
-      mainMaterial = new THREE.MeshPhysicalMaterial({
-        color: 0x0a0f1c,
+      // STEALTH TITANIUM (Liquid Chrome): Precision-milled dark titanium with crisp specular glints
+      mainMaterial = new THREE.MeshStandardMaterial({
+        color: 0x0e1422,
         emissive: c1,
-        emissiveIntensity: 0.14,
-        roughness: 0.05,
-        metalness: 0.96,
-        reflectivity: 0.98,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.04,
-        iridescence: 0.82,
-        iridescenceIOR: 1.48
+        emissiveIntensity: 0.10,
+        roughness: 0.20,
+        metalness: 0.94
       });
     }
 
+    // Machined Titanium Gate Collars
+    const collarMat = new THREE.MeshStandardMaterial({
+      color: 0x141a29,
+      emissive: 0x060a12,
+      roughness: 0.25,
+      metalness: 0.95
+    });
+
+    // Emissive Status LED Bezel on Collars
+    const bezelMat = new THREE.MeshBasicMaterial({
+      color: c1,
+      transparent: true,
+      opacity: 0.95
+    });
+
     // Inner Laser Spine Core
     const coreMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+      color: c1,
       transparent: true,
       opacity: 0.92,
       blending: THREE.AdditiveBlending
     });
 
-    // Luminous Quantum Photon Beads (Silky glowing spheres, replacing ugly crosses)
+    // Luminous Quantum Photon Sparks
     const photonMat = new THREE.MeshBasicMaterial({
-      color: c2,
+      color: 0xffffff,
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.98,
       blending: THREE.AdditiveBlending
     });
 
-    return { main: mainMaterial, core: coreMat, photon: photonMat };
+    return { main: mainMaterial, core: coreMat, photon: photonMat, collar: collarMat, bezel: bezelMat };
   };
 
   // Spawn Verification Shockwave
@@ -437,11 +444,12 @@ export const HyperCoreCanvas3D: React.FC = () => {
     currentCurveRef.current = curve;
     const mats = createMaterials(color1, color2, matType);
 
-    // LAYER 1: Silky-Smooth Organic Manifold Shell (High Precision Geometry)
+    // LAYER 1: Slender Architectural Titanium Superconducting Rail
     const shellGroup = new THREE.Group();
     const tubularSegments = 360;
-    const radialSegments = 48;
-    const geom = new THREE.TubeGeometry(curve, tubularSegments, p.tubeRadius, radialSegments, true);
+    const radialSegments = 16;
+    const effectiveRadius = Math.min(0.14, Math.max(0.04, p.tubeRadius || 0.08));
+    const geom = new THREE.TubeGeometry(curve, tubularSegments, effectiveRadius, radialSegments, true);
     geom.computeVertexNormals();
 
     // Bounding sphere calculation
@@ -463,10 +471,35 @@ export const HyperCoreCanvas3D: React.FC = () => {
     group.add(shellGroup);
     shellLayerRef.current = shellGroup;
 
-    // LAYER 2: Flowing Quantum Data Photons (Smooth glowing spheres moving dynamically)
+    // LAYER 2: Machined Cryptographic Gate Collars & Quantum Energy Sparks
     const nodesGroup = new THREE.Group();
-    const photonCount = 36;
-    const photonGeo = new THREE.SphereGeometry(0.026, 16, 16);
+    const collarCount = 18;
+    const collarRadius = effectiveRadius * 1.55;
+    const collarLength = 0.075;
+    const collarGeo = new THREE.CylinderGeometry(collarRadius, collarRadius, collarLength, 16);
+    const bezelGeo = new THREE.TorusGeometry(collarRadius * 1.04, 0.009, 8, 20);
+
+    for (let i = 0; i < collarCount; i++) {
+      const t = i / collarCount;
+      const pt = curve.getPoint(t);
+      const tangent = curve.getTangent(t).normalize();
+      const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent);
+
+      const collarMesh = new THREE.Mesh(collarGeo, mats.collar);
+      collarMesh.position.copy(pt);
+      collarMesh.quaternion.copy(quat);
+      nodesGroup.add(collarMesh);
+
+      const bezelMesh = new THREE.Mesh(bezelGeo, mats.bezel);
+      bezelMesh.position.copy(pt);
+      bezelMesh.quaternion.copy(quat);
+      bezelMesh.rotateX(Math.PI / 2);
+      nodesGroup.add(bezelMesh);
+    }
+
+    // Dynamic photon energy pulses streaming along the rail
+    const photonCount = 28;
+    const photonGeo = new THREE.SphereGeometry(effectiveRadius * 0.40, 12, 12);
     const flowingMeshes: THREE.Mesh[] = [];
 
     for (let i = 0; i < photonCount; i++) {
@@ -481,9 +514,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
     group.add(nodesGroup);
     nodesLayerRef.current = nodesGroup;
 
-    // LAYER 3: Internal Luminous Laser Spine Core (Radiant glowing filament)
+    // LAYER 3: Internal Radiant Laser Spine Core
     const coreGroup = new THREE.Group();
-    const coreGeom = new THREE.TubeGeometry(curve, tubularSegments, p.tubeRadius * 0.18, 16, true);
+    const coreGeom = new THREE.TubeGeometry(curve, tubularSegments, effectiveRadius * 0.28, 8, true);
     coreGeom.computeVertexNormals();
     const coreMesh = new THREE.Mesh(coreGeom, mats.core);
     coreGroup.add(coreMesh);
@@ -1312,7 +1345,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
                       : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  {mat === 'LIQUID_CHROME' ? 'Liquid Chrome' : mat === 'HOLO_WIREFRAME' ? 'Cyber Silk' : 'Prism Glass'}
+                  {mat === 'LIQUID_CHROME' ? 'Titanium Rail' : mat === 'HOLO_WIREFRAME' ? 'Stealth Carbon' : 'Obsidian Crystal'}
                 </button>
               ))}
             </div>
