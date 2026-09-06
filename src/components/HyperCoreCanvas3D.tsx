@@ -457,30 +457,51 @@ export const HyperCoreCanvas3D: React.FC = () => {
         }
       }
 
-      // Update Exploded View layer decomposition (cinematic 3D depth separation)
+      // Update Exploded View layer decomposition (Concentric Radial & X-Ray Decomposition)
       const targetExplode = isExplodedRef.current ? 1.0 : 0.0;
       explodeLerpRef.current = THREE.MathUtils.lerp(explodeLerpRef.current, targetExplode, delta * 3.5);
       const ep = explodeLerpRef.current;
 
       if (shellLayerRef.current) {
-        shellLayerRef.current.scale.setScalar(1.0 + ep * 0.45);
-        shellLayerRef.current.position.z = -ep * 0.6;
+        // Outer shell expands smoothly and concentrically
+        shellLayerRef.current.scale.setScalar(1.0 + ep * 0.42);
+        shellLayerRef.current.position.set(0, 0, 0);
+
+        // Modulate shell materials: solid metal dissolves into translucent X-Ray glass, wireframe sharpens
+        shellLayerRef.current.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            if (child.material instanceof THREE.MeshStandardMaterial) {
+              child.material.transparent = true;
+              child.material.opacity = THREE.MathUtils.lerp(0.95, 0.28, ep);
+            } else if (child.material instanceof THREE.MeshBasicMaterial && child.material.wireframe) {
+              child.material.opacity = THREE.MathUtils.lerp(0.55, 0.95, ep);
+            }
+          }
+        });
       }
+
       if (coreLayerRef.current) {
-        // Laser core pulls forward towards camera with intense presence
-        coreLayerRef.current.scale.setScalar(1.0 - ep * 0.15);
-        coreLayerRef.current.position.z = ep * 1.6;
+        // Inner laser core stays concentrically locked, blazing with high-voltage luminescence
+        coreLayerRef.current.scale.setScalar(1.0 - ep * 0.1);
+        coreLayerRef.current.position.set(0, 0, 0);
+
+        coreLayerRef.current.traverse((child) => {
+          if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+            child.material.emissiveIntensity = THREE.MathUtils.lerp(0.55, 1.8, ep);
+          }
+        });
       }
+
       if (nodesLayerRef.current) {
-        // Validation nodes expand far outward into orbital space
-        nodesLayerRef.current.scale.setScalar(1.0 + ep * 0.95);
-        nodesLayerRef.current.position.z = ep * 0.8;
+        // Consensus validator nodes expand outward into a wide orbital halo
+        nodesLayerRef.current.scale.setScalar(1.0 + ep * 0.82);
+        nodesLayerRef.current.position.set(0, 0, 0);
       }
+
       if (ringsRef.current && ringsRef.current.children.length >= 2) {
-        ringsRef.current.children[0].position.z = ep * 2.8;
-        ringsRef.current.children[1].position.z = -ep * 2.8;
-        ringsRef.current.children[0].scale.setScalar(1.0 + ep * 0.35);
-        ringsRef.current.children[1].scale.setScalar(1.0 + ep * 0.35);
+        ringsRef.current.scale.setScalar(1.0 + ep * 0.32);
+        ringsRef.current.children[0].position.z = ep * 1.8;
+        ringsRef.current.children[1].position.z = -ep * 1.8;
       }
 
       renderer.render(scene, camera);
@@ -538,7 +559,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
             roughness: 0.08,
             metalness: 0.95,
             emissive: 0x032115,
-            emissiveIntensity: 0.45
+            emissiveIntensity: 0.45,
+            transparent: true,
+            opacity: 0.95
           });
           wireMat = new THREE.MeshBasicMaterial({
             color: accentColorHex,
@@ -567,7 +590,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
             roughness: 0.04,
             metalness: 0.6,
             emissive: 0x4a154b,
-            emissiveIntensity: 0.55
+            emissiveIntensity: 0.55,
+            transparent: true,
+            opacity: 0.88
           });
           wireMat = new THREE.MeshBasicMaterial({
             color: 0xa855f7,
