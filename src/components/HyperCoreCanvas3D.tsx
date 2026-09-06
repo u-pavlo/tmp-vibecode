@@ -5,6 +5,7 @@ import { spatialAudio } from '../utils/spatialAudio';
 import { 
   Orbit, 
   RefreshCw, 
+  RotateCcw,
   Sparkles, 
   ShieldCheck,
   Layers,
@@ -58,6 +59,15 @@ const getRandomHex = () => {
   return s;
 };
 
+export const PARAM_BOUNDS: Record<keyof CurveParams, { min: number; max: number; step: number }> = {
+  a: { min: -15, max: 15, step: 0.5 },
+  b: { min: -15, max: 25, step: 0.5 },
+  p: { min: 1, max: 8, step: 1 },
+  q: { min: 1, max: 8, step: 1 },
+  twist: { min: 0, max: 3, step: 0.05 },
+  tubeRadius: { min: 0.15, max: 0.6, step: 0.01 }
+};
+
 export const HyperCoreCanvas3D: React.FC = () => {
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -68,6 +78,13 @@ export const HyperCoreCanvas3D: React.FC = () => {
     const sp = new URLSearchParams(window.location.search);
     const c = sp.get('chain')?.toUpperCase() as ChainKey;
     return (c && (c in CHAIN_PRESETS || c === 'CUSTOM')) ? c : 'ETHEREUM';
+  });
+
+  const [lastPresetKey, setLastPresetKey] = useState<Exclude<ChainKey, 'CUSTOM'>>(() => {
+    if (typeof window === 'undefined') return 'ETHEREUM';
+    const sp = new URLSearchParams(window.location.search);
+    const c = sp.get('chain')?.toUpperCase() as ChainKey;
+    return (c && c in CHAIN_PRESETS) ? (c as Exclude<ChainKey, 'CUSTOM'>) : 'ETHEREUM';
   });
 
   const [params, setParams] = useState<CurveParams>(() => {
@@ -175,7 +192,20 @@ export const HyperCoreCanvas3D: React.FC = () => {
         shortName: isSingular ? 'Cusp (Δ=0)' : 'Custom',
         badge: isSingular ? 'SINGULAR FIELD' : 'USER RECONFIGURED',
         curveType: isSingular ? 'Degenerate Singular Curve' : 'Custom Weierstrass Cryptographic Curve',
-        formula: `y² = x³ + ${params.a}x + ${params.b} mod ${params.p}`,
+        formula: (() => {
+          let expr = 'y² = x³';
+          if (params.a !== 0) {
+            const aSign = params.a > 0 ? '+ ' : '- ';
+            const aVal = Math.abs(params.a);
+            expr += ` ${aSign}${aVal === 1 ? '' : aVal}x`;
+          }
+          if (params.b !== 0) {
+            const bSign = params.b > 0 ? '+ ' : '- ';
+            const bVal = Math.abs(params.b);
+            expr += ` ${bSign}${bVal}`;
+          }
+          return `${expr} mod ${params.p}`;
+        })(),
         details: isSingular
           ? 'Singular discriminant (Δ = 0). The curve develops a sharp cusp or self-intersection, breaking cryptographic discrete logarithm hardness.'
           : 'Custom parametric curve actively synthesized on GPU.',
@@ -866,8 +896,11 @@ export const HyperCoreCanvas3D: React.FC = () => {
   const handleSelectChain = (key: ChainKey) => {
     setSelectedChain(key);
     if (key !== 'CUSTOM') {
-      const preset = CHAIN_PRESETS[key];
+      setLastPresetKey(key as Exclude<ChainKey, 'CUSTOM'>);
+      const preset = CHAIN_PRESETS[key as Exclude<ChainKey, 'CUSTOM'>];
       setParams({ ...preset.params });
+      setFormulaInput(preset.formula);
+      setParseStatus({ success: true, message: `Active Preset: ${preset.name}`, detectedType: 'PARAMS' });
       if (cameraRef.current) {
         const normal = cameraRef.current.position.clone().normalize();
         spawnVerificationAtPoint(new THREE.Vector3(0, 0, 0), normal, preset.primaryColor);
@@ -877,22 +910,72 @@ export const HyperCoreCanvas3D: React.FC = () => {
   };
 
   const handleParamChange = (param: keyof CurveParams, val: number) => {
+    if (isNaN(val)) return;
     setSelectedChain('CUSTOM');
+    const bounds = PARAM_BOUNDS[param];
+    const clamped = bounds ? Math.min(bounds.max, Math.max(bounds.min, val)) : val;
     setParams((prev) => ({
       ...prev,
-      [param]: val
+      [param]: clamped
     }));
   };
 
-  const handleStepParam = (param: keyof CurveParams, deltaVal: number, minVal: number, maxVal: number) => {
+  const handleStepParam = (param: keyof CurveParams, deltaVal: number, minVal?: number, maxVal?: number) => {
     setSelectedChain('CUSTOM');
+    const bounds = PARAM_BOUNDS[param];
+    const effectiveMin = minVal !== undefined ? minVal : (bounds?.min ?? -15);
+    const effectiveMax = maxVal !== undefined ? maxVal : (bounds?.max ?? 25);
     setParams((prev) => {
-      const next = Math.min(maxVal, Math.max(minVal, Number((prev[param] + deltaVal).toFixed(2))));
+      const next = Math.min(effectiveMax, Math.max(effectiveMin, Number((prev[param] + deltaVal).toFixed(2))));
       return {
         ...prev,
         [param]: next
       };
     });
+  };
+
+  const handleResetAll = () => {
+    const targetKey: Exclude<ChainKey, 'CUSTOM'> =
+      (selectedChain !== 'CUSTOM' && selectedChain in CHAIN_PRESETS)
+        ? (selectedChain as Exclude<ChainKey, 'CUSTOM'>)
+        : (lastPresetKey || 'ETHEREUM');
+
+    const preset = CHAIN_PRESETS[targetKey] || CHAIN_PRESETS.ETHEREUM;
+
+    setSelectedChain(targetKey);
+    setLastPresetKey(targetKey);
+    setParams({ ...preset.params });
+    setFormulaInput(preset.formula);
+    setParseStatus({ success: true, message: `Reset to ${preset.name}`, detectedType: 'PARAMS' });
+
+    setIsExploded(false);
+    isExplodedRef.current = false;
+
+    setUserZoomScale(1.0);
+    userZoomScaleRef.current = 1.0;
+
+    if (controlsRef.current && cameraRef.current) {
+      controlsRef.current.reset();
+      cameraRef.current.position.set(0, 0, 7.5);
+      controlsRef.current.target.set(0, 0, 0);
+    }
+
+    if (meshGroupRef.current && cameraRef.current) {
+      const { norm, posY } = computeFramingParameters(cameraRef.current.aspect, 1.0);
+      meshGroupRef.current.scale.setScalar(norm);
+      meshGroupRef.current.position.set(0, posY, 0);
+      if (ringsRef.current) {
+        ringsRef.current.scale.setScalar(norm);
+        ringsRef.current.position.set(0, posY, 0);
+      }
+    }
+
+    spatialAudio.playClick(920);
+    spatialAudio.playVerificationPing(1.25);
+    if (cameraRef.current) {
+      const normal = cameraRef.current.position.clone().normalize();
+      spawnVerificationAtPoint(new THREE.Vector3(0, 0, 0), normal, preset.primaryColor);
+    }
   };
 
   const handleApplyFormulaInput = (text: string) => {
@@ -1111,11 +1194,11 @@ export const HyperCoreCanvas3D: React.FC = () => {
           </button>
 
           <button
-            onClick={handleResetScale}
-            className="p-1.5 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl border border-white/15 cursor-pointer transition-colors"
-            title="Reset 3D Camera & Orientation"
+            onClick={handleResetAll}
+            className="p-1.5 bg-white/5 hover:bg-white/10 active:rotate-180 text-gray-300 hover:text-white rounded-xl border border-white/15 cursor-pointer transition-all duration-300 group"
+            title="Reset All: Curve Parameters, Preset & Camera (Сбросить кривую и параметры к исходным)"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw className="w-3.5 h-3.5 group-active:rotate-180 transition-transform duration-300" />
           </button>
         </div>
       </div>
@@ -1307,16 +1390,19 @@ export const HyperCoreCanvas3D: React.FC = () => {
                   <span className="text-gray-400">+</span>
 
                   {/* Inline Editable a */}
-                  <div className="inline-flex items-center bg-amber-500/15 border border-amber-500/40 hover:border-amber-400 focus-within:border-amber-400 rounded px-1 py-0.5">
+                  <div className="inline-flex items-center bg-amber-500/15 border border-amber-500/40 hover:border-amber-400 focus-within:border-amber-400 rounded px-1.5 py-0.5">
                     <input
                       type="number"
-                      step="0.5"
+                      min={PARAM_BOUNDS.a.min}
+                      max={PARAM_BOUNDS.a.max}
+                      step={PARAM_BOUNDS.a.step}
                       value={params.a}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value);
                         if (!isNaN(val)) handleParamChange('a', val);
                       }}
-                      className="w-7 bg-transparent text-amber-300 font-bold text-center outline-none text-xs"
+                      onWheel={(e) => e.currentTarget.blur()}
+                      className="w-12 min-w-[44px] bg-transparent text-amber-300 font-bold text-center outline-none text-xs font-mono"
                       title="Direct edit Weierstrass parameter a"
                     />
                     <span className="text-amber-400 text-[10px]">·x</span>
@@ -1325,16 +1411,19 @@ export const HyperCoreCanvas3D: React.FC = () => {
                   <span className="text-gray-400">+</span>
 
                   {/* Inline Editable b */}
-                  <div className="inline-flex items-center bg-purple-500/15 border border-purple-500/40 hover:border-purple-400 focus-within:border-purple-400 rounded px-1 py-0.5">
+                  <div className="inline-flex items-center bg-purple-500/15 border border-purple-500/40 hover:border-purple-400 focus-within:border-purple-400 rounded px-1.5 py-0.5">
                     <input
                       type="number"
-                      step="0.5"
+                      min={PARAM_BOUNDS.b.min}
+                      max={PARAM_BOUNDS.b.max}
+                      step={PARAM_BOUNDS.b.step}
                       value={params.b}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value);
                         if (!isNaN(val)) handleParamChange('b', val);
                       }}
-                      className="w-7 bg-transparent text-purple-300 font-bold text-center outline-none text-xs"
+                      onWheel={(e) => e.currentTarget.blur()}
+                      className="w-12 min-w-[44px] bg-transparent text-purple-300 font-bold text-center outline-none text-xs font-mono"
                       title="Direct edit Weierstrass parameter b"
                     />
                   </div>
@@ -1352,7 +1441,8 @@ export const HyperCoreCanvas3D: React.FC = () => {
                         const val = parseInt(e.target.value);
                         if (!isNaN(val) && val >= 1 && val <= 8) handleParamChange('p', val);
                       }}
-                      className="w-5 bg-transparent text-cyan-300 font-bold text-center outline-none text-xs"
+                      onWheel={(e) => e.currentTarget.blur()}
+                      className="w-6 bg-transparent text-cyan-300 font-bold text-center outline-none text-xs font-mono"
                       title="Direct edit Torus winding parameter p"
                     />
                   </div>
@@ -1463,14 +1553,14 @@ export const HyperCoreCanvas3D: React.FC = () => {
                     <span className="text-gray-300">Param a (Meridian):</span>
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => handleStepParam('a', -0.5, -10, 10)}
+                        onClick={() => handleStepParam('a', -0.5)}
                         className="w-3.5 h-3.5 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-[10px] text-gray-300 hover:text-white cursor-pointer"
                       >
                         <Minus className="w-2 h-2" />
                       </button>
                       <span className="text-amber-300 font-bold font-mono min-w-[26px] text-center">{params.a}</span>
                       <button
-                        onClick={() => handleStepParam('a', 0.5, -10, 10)}
+                        onClick={() => handleStepParam('a', 0.5)}
                         className="w-3.5 h-3.5 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-[10px] text-gray-300 hover:text-white cursor-pointer"
                       >
                         <Plus className="w-2 h-2" />
@@ -1479,9 +1569,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
                   </div>
                   <input
                     type="range"
-                    min="-10"
-                    max="10"
-                    step="0.5"
+                    min={PARAM_BOUNDS.a.min}
+                    max={PARAM_BOUNDS.a.max}
+                    step={PARAM_BOUNDS.a.step}
                     value={params.a}
                     onChange={(e) => handleParamChange('a', parseFloat(e.target.value))}
                     className="w-full h-1 accent-amber-400 cursor-pointer mt-1"
@@ -1494,14 +1584,14 @@ export const HyperCoreCanvas3D: React.FC = () => {
                     <span className="text-gray-300">Param b (Toroid):</span>
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => handleStepParam('b', -0.5, -10, 20)}
+                        onClick={() => handleStepParam('b', -0.5)}
                         className="w-3.5 h-3.5 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-[10px] text-gray-300 hover:text-white cursor-pointer"
                       >
                         <Minus className="w-2 h-2" />
                       </button>
                       <span className="text-purple-300 font-bold font-mono min-w-[26px] text-center">{params.b}</span>
                       <button
-                        onClick={() => handleStepParam('b', 0.5, -10, 20)}
+                        onClick={() => handleStepParam('b', 0.5)}
                         className="w-3.5 h-3.5 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-[10px] text-gray-300 hover:text-white cursor-pointer"
                       >
                         <Plus className="w-2 h-2" />
@@ -1510,9 +1600,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
                   </div>
                   <input
                     type="range"
-                    min="-10"
-                    max="20"
-                    step="0.5"
+                    min={PARAM_BOUNDS.b.min}
+                    max={PARAM_BOUNDS.b.max}
+                    step={PARAM_BOUNDS.b.step}
                     value={params.b}
                     onChange={(e) => handleParamChange('b', parseFloat(e.target.value))}
                     className="w-full h-1 accent-purple-400 cursor-pointer mt-1"
@@ -1528,9 +1618,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
                     </div>
                     <input
                       type="range"
-                      min="1"
-                      max="8"
-                      step="1"
+                      min={PARAM_BOUNDS.p.min}
+                      max={PARAM_BOUNDS.p.max}
+                      step={PARAM_BOUNDS.p.step}
                       value={params.p}
                       onChange={(e) => handleParamChange('p', parseInt(e.target.value))}
                       className="w-full h-1 accent-cyan-400 cursor-pointer"
@@ -1544,9 +1634,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
                     </div>
                     <input
                       type="range"
-                      min="1"
-                      max="12"
-                      step="1"
+                      min={PARAM_BOUNDS.q.min}
+                      max={PARAM_BOUNDS.q.max}
+                      step={PARAM_BOUNDS.q.step}
                       value={params.q}
                       onChange={(e) => handleParamChange('q', parseInt(e.target.value))}
                       className="w-full h-1 accent-cyan-400 cursor-pointer"
@@ -1563,9 +1653,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
                     </div>
                     <input
                       type="range"
-                      min="0"
-                      max="3"
-                      step="0.05"
+                      min={PARAM_BOUNDS.twist.min}
+                      max={PARAM_BOUNDS.twist.max}
+                      step={PARAM_BOUNDS.twist.step}
                       value={params.twist}
                       onChange={(e) => handleParamChange('twist', parseFloat(e.target.value))}
                       className="w-full h-1 accent-emerald-400 cursor-pointer"
@@ -1579,15 +1669,34 @@ export const HyperCoreCanvas3D: React.FC = () => {
                     </div>
                     <input
                       type="range"
-                      min="0.15"
-                      max="0.55"
-                      step="0.02"
+                      min={PARAM_BOUNDS.tubeRadius.min}
+                      max={PARAM_BOUNDS.tubeRadius.max}
+                      step={PARAM_BOUNDS.tubeRadius.step}
                       value={params.tubeRadius}
                       onChange={(e) => handleParamChange('tubeRadius', parseFloat(e.target.value))}
                       className="w-full h-1 accent-emerald-400 cursor-pointer"
                     />
                   </div>
                 </div>
+
+                {/* Reset to Preset Button */}
+                <button
+                  onClick={() => {
+                    const targetKey = (selectedChain !== 'CUSTOM' && selectedChain in CHAIN_PRESETS)
+                      ? (selectedChain as Exclude<ChainKey, 'CUSTOM'>)
+                      : (lastPresetKey || 'ETHEREUM');
+                    const preset = CHAIN_PRESETS[targetKey];
+                    setParams({ ...preset.params });
+                    setFormulaInput(preset.formula);
+                    setParseStatus({ success: true, message: `Reset to ${preset.name}`, detectedType: 'PARAMS' });
+                    spatialAudio.playClick(900);
+                  }}
+                  className="mt-1 flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[9px] text-gray-400 hover:text-white border border-white/10 cursor-pointer font-mono transition-colors"
+                  title="Reset parameters to active preset standard"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>RESET PARAMETERS</span>
+                </button>
               </div>
             </div>
 
@@ -1652,30 +1761,36 @@ export const HyperCoreCanvas3D: React.FC = () => {
                     <span>=</span>
                     <span className="text-cyan-400 font-bold">x³</span>
                     <span>+</span>
-                    <div className="inline-flex items-center bg-amber-500/15 border border-amber-500/40 rounded px-1">
+                    <div className="inline-flex items-center bg-amber-500/15 border border-amber-500/40 rounded px-1.5 py-0.5">
                       <input
                         type="number"
-                        step="0.5"
+                        min={PARAM_BOUNDS.a.min}
+                        max={PARAM_BOUNDS.a.max}
+                        step={PARAM_BOUNDS.a.step}
                         value={params.a}
                         onChange={(e) => {
                           const val = parseFloat(e.target.value);
                           if (!isNaN(val)) handleParamChange('a', val);
                         }}
-                        className="w-7 bg-transparent text-amber-300 font-bold text-center outline-none text-[11px]"
+                        onWheel={(e) => e.currentTarget.blur()}
+                        className="w-12 min-w-[44px] bg-transparent text-amber-300 font-bold text-center outline-none text-[11px] font-mono"
                       />
                       <span className="text-amber-400 text-[10px]">·x</span>
                     </div>
                     <span>+</span>
-                    <div className="inline-flex items-center bg-purple-500/15 border border-purple-500/40 rounded px-1">
+                    <div className="inline-flex items-center bg-purple-500/15 border border-purple-500/40 rounded px-1.5 py-0.5">
                       <input
                         type="number"
-                        step="0.5"
+                        min={PARAM_BOUNDS.b.min}
+                        max={PARAM_BOUNDS.b.max}
+                        step={PARAM_BOUNDS.b.step}
                         value={params.b}
                         onChange={(e) => {
                           const val = parseFloat(e.target.value);
                           if (!isNaN(val)) handleParamChange('b', val);
                         }}
-                        className="w-7 bg-transparent text-purple-300 font-bold text-center outline-none text-[11px]"
+                        onWheel={(e) => e.currentTarget.blur()}
+                        className="w-12 min-w-[44px] bg-transparent text-purple-300 font-bold text-center outline-none text-[11px] font-mono"
                       />
                     </div>
                     <span className="text-gray-400 text-[10px]">(mod</span>
@@ -1688,7 +1803,8 @@ export const HyperCoreCanvas3D: React.FC = () => {
                         const val = parseInt(e.target.value);
                         if (!isNaN(val) && val >= 1 && val <= 8) handleParamChange('p', val);
                       }}
-                      className="w-5 bg-cyan-500/10 border border-cyan-500/30 rounded text-cyan-300 font-bold text-center outline-none text-[10px]"
+                      onWheel={(e) => e.currentTarget.blur()}
+                      className="w-6 bg-cyan-500/10 border border-cyan-500/30 rounded text-cyan-300 font-bold text-center outline-none text-[10px] font-mono"
                     />
                     <span className="text-gray-400 text-[10px]">)</span>
                   </div>
@@ -1759,15 +1875,15 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
               {/* Column 3: Live Sliders */}
               <div className="flex flex-col justify-between bg-black/50 p-2.5 rounded-xl border border-white/10 text-[9px]">
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-gray-300">Param a:</span>
-                    <span className="text-amber-400 font-bold">{params.a}</span>
+                    <span className="text-amber-400 font-bold font-mono">{params.a}</span>
                     <input
                       type="range"
-                      min="-10"
-                      max="10"
-                      step="0.5"
+                      min={PARAM_BOUNDS.a.min}
+                      max={PARAM_BOUNDS.a.max}
+                      step={PARAM_BOUNDS.a.step}
                       value={params.a}
                       onChange={(e) => handleParamChange('a', parseFloat(e.target.value))}
                       className="w-24 h-1 accent-amber-400 cursor-pointer"
@@ -1776,12 +1892,12 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
                   <div className="flex items-center justify-between">
                     <span className="text-gray-300">Param b:</span>
-                    <span className="text-purple-400 font-bold">{params.b}</span>
+                    <span className="text-purple-400 font-bold font-mono">{params.b}</span>
                     <input
                       type="range"
-                      min="-10"
-                      max="20"
-                      step="0.5"
+                      min={PARAM_BOUNDS.b.min}
+                      max={PARAM_BOUNDS.b.max}
+                      step={PARAM_BOUNDS.b.step}
                       value={params.b}
                       onChange={(e) => handleParamChange('b', parseFloat(e.target.value))}
                       className="w-24 h-1 accent-purple-400 cursor-pointer"
@@ -1789,13 +1905,13 @@ export const HyperCoreCanvas3D: React.FC = () => {
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <span className="text-gray-300">Winding p/q:</span>
-                    <span className="text-cyan-400 font-bold">{params.p}/{params.q}</span>
+                    <span className="text-gray-300">Winding p:</span>
+                    <span className="text-cyan-400 font-bold font-mono">{params.p}</span>
                     <input
                       type="range"
-                      min="1"
-                      max="8"
-                      step="1"
+                      min={PARAM_BOUNDS.p.min}
+                      max={PARAM_BOUNDS.p.max}
+                      step={PARAM_BOUNDS.p.step}
                       value={params.p}
                       onChange={(e) => handleParamChange('p', parseInt(e.target.value))}
                       className="w-24 h-1 accent-cyan-400 cursor-pointer"
@@ -1803,19 +1919,52 @@ export const HyperCoreCanvas3D: React.FC = () => {
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <span className="text-gray-300">Twist τ:</span>
-                    <span className="text-emerald-400 font-bold">{params.twist}</span>
+                    <span className="text-gray-300">Winding q:</span>
+                    <span className="text-cyan-400 font-bold font-mono">{params.q}</span>
                     <input
                       type="range"
-                      min="0"
-                      max="3"
-                      step="0.05"
+                      min={PARAM_BOUNDS.q.min}
+                      max={PARAM_BOUNDS.q.max}
+                      step={PARAM_BOUNDS.q.step}
+                      value={params.q}
+                      onChange={(e) => handleParamChange('q', parseInt(e.target.value))}
+                      className="w-24 h-1 accent-cyan-400 cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-300">Twist τ:</span>
+                    <span className="text-emerald-400 font-bold font-mono">{params.twist}</span>
+                    <input
+                      type="range"
+                      min={PARAM_BOUNDS.twist.min}
+                      max={PARAM_BOUNDS.twist.max}
+                      step={PARAM_BOUNDS.twist.step}
                       value={params.twist}
                       onChange={(e) => handleParamChange('twist', parseFloat(e.target.value))}
                       className="w-24 h-1 accent-emerald-400 cursor-pointer"
                     />
                   </div>
                 </div>
+
+                {/* Reset to Preset Button */}
+                <button
+                  onClick={() => {
+                    const targetKey = (selectedChain !== 'CUSTOM' && selectedChain in CHAIN_PRESETS)
+                      ? (selectedChain as Exclude<ChainKey, 'CUSTOM'>)
+                      : (lastPresetKey || 'ETHEREUM');
+                    const preset = CHAIN_PRESETS[targetKey];
+                    setParams({ ...preset.params });
+                    setFormulaInput(preset.formula);
+                    setParseStatus({ success: true, message: `Reset to ${preset.name}`, detectedType: 'PARAMS' });
+                    spatialAudio.playClick(900);
+                  }}
+                  className="mt-1 flex items-center justify-center gap-1 w-full py-1 rounded bg-white/5 hover:bg-white/10 text-[8px] text-gray-400 hover:text-white border border-white/10 cursor-pointer font-mono transition-colors"
+                  title="Reset parameters to active preset standard"
+                >
+                  <RotateCcw className="w-2.5 h-2.5" />
+                  <span>RESET PARAMETERS</span>
+                </button>
               </div>
             </div>
           </div>
