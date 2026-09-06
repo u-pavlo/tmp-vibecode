@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { spatialAudio } from '../utils/spatialAudio';
-import { Zap, Orbit, RefreshCw, Eye, Sparkles } from 'lucide-react';
+import { Zap, Orbit, RefreshCw, ZoomIn, ZoomOut, Move3d } from 'lucide-react';
 
 type GeometryType = 'TORUS_KNOT' | 'QUANTUM_CORE' | 'MOEBIUS_RIBBON' | 'PARTICLE_SWARM';
 type MaterialType = 'HOLO_WIREFRAME' | 'LIQUID_CHROME' | 'IRIDESCENT_GLASS';
@@ -13,10 +14,12 @@ export const HyperCoreCanvas3D: React.FC = () => {
   const [geometryType, setGeometryType] = useState<GeometryType>('TORUS_KNOT');
   const [materialType, setMaterialType] = useState<MaterialType>('LIQUID_CHROME');
   const [isRotating, setIsRotating] = useState(true);
-  const [pulseCount, setPulseCount] = useState(0);
+  const [isInteracting, setIsInteracting] = useState(false);
 
   // References for three.js objects
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
   const meshGroupRef = useRef<THREE.Group | null>(null);
   const innerMeshRef = useRef<THREE.Mesh | null>(null);
   const wireframeMeshRef = useRef<THREE.Mesh | null>(null);
@@ -40,6 +43,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
     camera.position.set(0, 0, 7.5);
+    cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({
       canvas,
@@ -50,28 +54,51 @@ export const HyperCoreCanvas3D: React.FC = () => {
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    // 2. Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    // 2. OrbitControls (Free 360° Drag & Zoom Rotation)
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05; // silky smooth momentum
+    controls.autoRotate = isRotating;
+    controls.autoRotateSpeed = 1.0;
+    controls.minDistance = 3.5;
+    controls.maxDistance = 14;
+    controls.enableZoom = true;
+    controls.enablePan = false; // keeps sculpture centered in frame
+    controls.rotateSpeed = 0.85;
+
+    controls.addEventListener('start', () => {
+      setIsInteracting(true);
+      spatialAudio.playClick(800);
+    });
+
+    controls.addEventListener('end', () => {
+      setIsInteracting(false);
+    });
+
+    controlsRef.current = controls;
+
+    // 3. Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
     scene.add(ambientLight);
 
-    const pointLight1 = new THREE.PointLight(0x00ffa3, 40, 50);
-    pointLight1.position.set(5, 5, 5);
+    const pointLight1 = new THREE.PointLight(0x00ffa3, 45, 60);
+    pointLight1.position.set(6, 6, 6);
     scene.add(pointLight1);
 
-    const pointLight2 = new THREE.PointLight(0x00e5ff, 35, 50);
-    pointLight2.position.set(-5, -4, 4);
+    const pointLight2 = new THREE.PointLight(0x00e5ff, 40, 60);
+    pointLight2.position.set(-6, -5, 5);
     scene.add(pointLight2);
 
-    const pointLight3 = new THREE.PointLight(0xa855f7, 30, 50);
-    pointLight3.position.set(0, 6, -4);
+    const pointLight3 = new THREE.PointLight(0xa855f7, 35, 60);
+    pointLight3.position.set(0, 7, -5);
     scene.add(pointLight3);
 
-    // 3. Central Mesh Group
+    // 4. Central Mesh Group
     const meshGroup = new THREE.Group();
     meshGroupRef.current = meshGroup;
     scene.add(meshGroup);
 
-    // 4. Background Starfield & Kinetic Particles
+    // 5. Starfield & Kinetic Particles
     const particleCount = 1800;
     const particleGeometry = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
@@ -114,7 +141,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
     particlesRef.current = particles;
     scene.add(particles);
 
-    // 5. Orbital Gyroscopic Rings
+    // 6. Orbital Gyroscopic Rings
     const ringsGroup = new THREE.Group();
     ringsRef.current = ringsGroup;
 
@@ -133,7 +160,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
     scene.add(ringsGroup);
 
-    // 6. Shockwave Plane
+    // 7. Shockwave Plane
     const shockGeo = new THREE.RingGeometry(0.1, 0.25, 64);
     const shockMat = new THREE.MeshBasicMaterial({
       color: 0x00ffa3,
@@ -145,22 +172,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
     shockMesh.rotation.x = Math.PI / 2;
     scene.add(shockMesh);
     shockwaveRef.current = { mesh: shockMesh, scale: 0.1, active: false };
-
-    // 7. Mouse tracking & interaction
-    let mouseX = 0;
-    let mouseY = 0;
-    let targetX = 0;
-    let targetY = 0;
-
-    const onMouseMove = (e: MouseEvent) => {
-      const rect = container.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width - 0.5;
-      const y = (e.clientY - rect.top) / rect.height - 0.5;
-      targetX = x * 2.2;
-      targetY = -y * 2.2;
-    };
-
-    window.addEventListener('mousemove', onMouseMove);
 
     // 8. Resize Handler
     const onResize = () => {
@@ -183,18 +194,12 @@ export const HyperCoreCanvas3D: React.FC = () => {
       const delta = clock.getDelta();
       const elapsed = clock.getElapsedTime();
 
-      // Smooth camera parallax
-      mouseX += (targetX - mouseX) * 0.05;
-      mouseY += (targetY - mouseY) * 0.05;
+      // Update OrbitControls (handles damping, free drag, momentum, and auto-rotation)
+      controls.update();
 
-      camera.position.x = mouseX * 2;
-      camera.position.y = mouseY * 2;
-      camera.lookAt(0, 0, 0);
-
-      // Rotate central 3D mesh
-      if (meshGroupRef.current && isRotating) {
-        meshGroupRef.current.rotation.x = elapsed * 0.25;
-        meshGroupRef.current.rotation.y = elapsed * 0.35;
+      // Additional subtle internal rotation
+      if (meshGroupRef.current) {
+        meshGroupRef.current.rotation.y += delta * 0.1;
       }
 
       // Rotate orbital rings
@@ -205,8 +210,8 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
       // Rotate particle field
       if (particlesRef.current) {
-        particlesRef.current.rotation.y = elapsed * 0.04;
-        particlesRef.current.rotation.z = elapsed * 0.02;
+        particlesRef.current.rotation.y = elapsed * 0.03;
+        particlesRef.current.rotation.z = elapsed * 0.015;
       }
 
       // Handle shockwave expansion
@@ -214,9 +219,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
         const sw = shockwaveRef.current;
         sw.scale += delta * 12;
         sw.mesh.scale.set(sw.scale, sw.scale, sw.scale);
-        (sw.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.8 - sw.scale * 0.12);
+        (sw.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.85 - sw.scale * 0.12);
 
-        if (sw.scale > 7) {
+        if (sw.scale > 7.5) {
           sw.active = false;
           (sw.mesh.material as THREE.MeshBasicMaterial).opacity = 0;
         }
@@ -228,11 +233,18 @@ export const HyperCoreCanvas3D: React.FC = () => {
     animate();
 
     return () => {
-      window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('resize', onResize);
       cancelAnimationFrame(animId);
+      controls.dispose();
       renderer.dispose();
     };
+  }, []);
+
+  // Update auto-rotate in controls when state changes
+  useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.autoRotate = isRotating;
+    }
   }, [isRotating]);
 
   // Re-build central geometry & materials whenever state changes
@@ -334,7 +346,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
   // Trigger Shockwave Burst
   const triggerPulse = () => {
-    setPulseCount(prev => prev + 1);
     spatialAudio.playWarp();
 
     if (shockwaveRef.current) {
@@ -354,38 +365,66 @@ export const HyperCoreCanvas3D: React.FC = () => {
     spatialAudio.playClick(1050);
   };
 
+  const handleResetCamera = () => {
+    if (controlsRef.current && cameraRef.current) {
+      controlsRef.current.reset();
+      cameraRef.current.position.set(0, 0, 7.5);
+      cameraRef.current.lookAt(0, 0, 0);
+      spatialAudio.playClick(900);
+    }
+  };
+
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[520px] lg:h-[620px] rounded-3xl overflow-hidden border border-white/15 bg-gradient-to-b from-[#0a0518] via-[#04020a] to-[#020106] shadow-2xl"
+      className="relative w-full h-[520px] lg:h-[620px] rounded-3xl overflow-hidden border border-white/15 bg-gradient-to-b from-[#0a0518] via-[#04020a] to-[#020106] shadow-2xl group"
     >
-      {/* 3D Canvas Viewport */}
+      {/* 3D Canvas Viewport with Free Orbit Controls */}
       <canvas
         ref={canvasRef}
-        onClick={triggerPulse}
+        onDoubleClick={triggerPulse}
         className="w-full h-full block cursor-grab active:cursor-grabbing"
       />
 
       {/* Top Floating Spatial HUD */}
       <div className="absolute top-4 left-4 right-4 z-20 flex flex-wrap items-center justify-between gap-3 pointer-events-none">
-        <div className="flex items-center gap-2.5 bg-black/60 backdrop-blur-xl border border-white/15 px-4 py-2 rounded-full text-xs text-white pointer-events-auto">
+        <div className="flex items-center gap-2.5 bg-black/65 backdrop-blur-xl border border-white/15 px-4 py-2 rounded-full text-xs text-white pointer-events-auto">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
           <span className="font-bold tracking-wider font-mono">ELASTIC_HYPER_CORE_3D</span>
           <span className="text-white/30">|</span>
-          <span className="text-emerald-400 font-mono text-[11px]">WebGL 2.0 • 60 FPS</span>
+          <span className="text-emerald-400 font-mono text-[11px]">OrbitControls 360°</span>
         </div>
 
-        <button
-          onClick={triggerPulse}
-          className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-4 py-2 rounded-full text-xs transition-all shadow-lg shadow-emerald-500/25 pointer-events-auto cursor-pointer hover:scale-105"
-        >
-          <Zap className="w-3.5 h-3.5 fill-current" />
-          <span>TRIGGER_SHOCKWAVE</span>
-        </button>
+        <div className="flex items-center gap-2 pointer-events-auto">
+          <button
+            onClick={handleResetCamera}
+            className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-gray-200 hover:text-white font-mono px-3 py-2 rounded-full text-xs transition-colors border border-white/15 cursor-pointer"
+            title="Reset Camera Angle"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">RESET_VIEW</span>
+          </button>
+
+          <button
+            onClick={triggerPulse}
+            className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-4 py-2 rounded-full text-xs transition-all shadow-lg shadow-emerald-500/25 cursor-pointer hover:scale-105"
+          >
+            <Zap className="w-3.5 h-3.5 fill-current" />
+            <span>SHOCKWAVE</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Floating Free Rotation Helper Hint */}
+      <div className="absolute top-16 left-4 z-20 pointer-events-none">
+        <div className="bg-black/50 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-xl text-[11px] text-gray-300 font-mono flex items-center gap-2">
+          <Move3d className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Зажмите ЛКМ для свободного вращения 360° • Колесико: зум</span>
+        </div>
       </div>
 
       {/* Bottom Interactive Control Center */}
-      <div className="absolute bottom-4 left-4 right-4 z-20 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-black/75 backdrop-blur-2xl border border-white/15 p-3 rounded-2xl">
+      <div className="absolute bottom-4 left-4 right-4 z-20 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-black/80 backdrop-blur-2xl border border-white/15 p-3 rounded-2xl">
         {/* Geometry Switcher */}
         <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
           <span className="text-white/50 text-[11px] mr-1 hidden sm:inline">GEOMETRY:</span>
@@ -429,10 +468,14 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
           <button
             onClick={() => setIsRotating(!isRotating)}
-            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
+            className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+              isRotating
+                ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
+            }`}
             title="Toggle Auto-Rotation"
           >
-            <Orbit className={`w-4 h-4 ${isRotating ? 'text-emerald-400 animate-spin' : 'text-gray-500'}`} />
+            <Orbit className={`w-4 h-4 ${isRotating ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
