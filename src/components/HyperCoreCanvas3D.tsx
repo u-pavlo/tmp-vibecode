@@ -457,24 +457,30 @@ export const HyperCoreCanvas3D: React.FC = () => {
         }
       }
 
-      // Update Exploded View layer decomposition
+      // Update Exploded View layer decomposition (cinematic 3D depth separation)
       const targetExplode = isExplodedRef.current ? 1.0 : 0.0;
-      explodeLerpRef.current = THREE.MathUtils.lerp(explodeLerpRef.current, targetExplode, delta * 3.8);
+      explodeLerpRef.current = THREE.MathUtils.lerp(explodeLerpRef.current, targetExplode, delta * 3.5);
       const ep = explodeLerpRef.current;
 
       if (shellLayerRef.current) {
-        shellLayerRef.current.scale.setScalar(1.0 + ep * 0.42);
+        shellLayerRef.current.scale.setScalar(1.0 + ep * 0.45);
+        shellLayerRef.current.position.z = -ep * 0.6;
       }
       if (coreLayerRef.current) {
-        coreLayerRef.current.scale.setScalar(1.0 - ep * 0.18);
-        coreLayerRef.current.position.z = ep * 0.4;
+        // Laser core pulls forward towards camera with intense presence
+        coreLayerRef.current.scale.setScalar(1.0 - ep * 0.15);
+        coreLayerRef.current.position.z = ep * 1.6;
       }
       if (nodesLayerRef.current) {
-        nodesLayerRef.current.scale.setScalar(1.0 + ep * 0.82);
+        // Validation nodes expand far outward into orbital space
+        nodesLayerRef.current.scale.setScalar(1.0 + ep * 0.95);
+        nodesLayerRef.current.position.z = ep * 0.8;
       }
       if (ringsRef.current && ringsRef.current.children.length >= 2) {
-        ringsRef.current.children[0].position.z = ep * 2.2;
-        ringsRef.current.children[1].position.z = -ep * 2.2;
+        ringsRef.current.children[0].position.z = ep * 2.8;
+        ringsRef.current.children[1].position.z = -ep * 2.8;
+        ringsRef.current.children[0].scale.setScalar(1.0 + ep * 0.35);
+        ringsRef.current.children[1].scale.setScalar(1.0 + ep * 0.35);
       }
 
       renderer.render(scene, camera);
@@ -794,7 +800,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
     setTags(prev => [...prev.slice(-4), newTag]);
     setTimeout(() => {
       setTags(prev => prev.filter(t => t.id !== tagId));
-    }, 1200);
+    }, 1800);
   };
 
   const handleSelectGeometry = (type: GeometryType) => {
@@ -836,8 +842,8 @@ export const HyperCoreCanvas3D: React.FC = () => {
     const clientY = e.clientY;
     pointerStartRef.current = null;
 
-    // Distinguish stationary tap (< 6px movement, < 350ms duration) from 3D camera drag
-    if (dist < 6 && elapsed < 350) {
+    // Distinguish stationary tap (< 16px micro-movement, < 650ms duration) from 3D camera drag
+    if (dist < 16 && elapsed < 650) {
       triggerVerificationClick(clientX, clientY);
     }
   };
@@ -860,23 +866,23 @@ export const HyperCoreCanvas3D: React.FC = () => {
         @keyframes cryptoAuditBadge {
           0% {
             opacity: 0;
-            transform: translate(-50%, 0) scale(0.75);
+            transform: translate(-50%, 0) scale(0.7);
           }
-          15% {
+          12% {
             opacity: 1;
-            transform: translate(-50%, -10px) scale(1.03);
+            transform: translate(-50%, -14px) scale(1.06);
           }
-          75% {
-            opacity: 0.95;
-            transform: translate(-50%, -22px) scale(1);
+          80% {
+            opacity: 1;
+            transform: translate(-50%, -26px) scale(1);
           }
           100% {
             opacity: 0;
-            transform: translate(-50%, -34px) scale(0.92);
+            transform: translate(-50%, -40px) scale(0.92);
           }
         }
         .crypto-audit-tag {
-          animation: cryptoAuditBadge 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation: cryptoAuditBadge 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
       `}</style>
 
@@ -920,14 +926,14 @@ export const HyperCoreCanvas3D: React.FC = () => {
               isExplodedRef.current = next;
               spatialAudio.playExplode(next);
             }}
-            className={`flex items-center gap-1.5 font-mono px-3.5 py-2 rounded-full text-xs transition-all border cursor-pointer ${
+            className={`flex items-center gap-1.5 font-mono px-4 py-2 rounded-full text-xs font-bold transition-all border cursor-pointer ${
               isExploded
-                ? 'bg-gradient-to-r from-emerald-500/25 to-cyan-500/25 border-emerald-400 text-emerald-300 shadow-lg shadow-emerald-500/20'
-                : 'bg-white/10 hover:bg-white/20 text-gray-200 hover:text-white border-white/15'
+                ? 'bg-gradient-to-r from-emerald-500 to-cyan-500 text-black border-emerald-400 shadow-xl shadow-emerald-500/30 scale-[1.03]'
+                : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border-emerald-500/40 hover:border-emerald-400 shadow-lg shadow-emerald-500/10'
             }`}
             title="Toggle Exploded Layer Decomposition"
           >
-            <Layers className="w-3.5 h-3.5" />
+            <Layers className={`w-3.5 h-3.5 ${isExploded ? 'animate-pulse' : ''}`} />
             <span>{isExploded ? 'COLLAPSE' : 'EXPLODED_VIEW'}</span>
           </button>
 
