@@ -3,10 +3,11 @@ import { ConceptSwitcher, ConceptType } from './components/ConceptSwitcher';
 import { ConceptA } from './concepts/ConceptA';
 import { ConceptB } from './concepts/ConceptB';
 import { ConceptC } from './concepts/ConceptC';
+import { ConceptD } from './concepts/ConceptD';
 
 export const App: React.FC = () => {
-  // Set default concept to 'A' as explicitly requested: "но сначала запусти на 5173 сделанный А"
-  const [activeConcept, setActiveConcept] = useState<ConceptType>('A');
+  // Set default concept to 'D' (Hyper-Spatial 3D Kinetic) to showcase the new 3D design
+  const [activeConcept, setActiveConcept] = useState<ConceptType>('D');
 
   return (
     <div className="min-h-screen bg-black">
@@ -20,6 +21,7 @@ export const App: React.FC = () => {
       {activeConcept === 'A' && <ConceptA />}
       {activeConcept === 'B' && <ConceptB />}
       {activeConcept === 'C' && <ConceptC />}
+      {activeConcept === 'D' && <ConceptD />}
     </div>
   );
 };
