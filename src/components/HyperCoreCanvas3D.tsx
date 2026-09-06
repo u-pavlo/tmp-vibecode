@@ -1,11 +1,58 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { spatialAudio } from '../utils/spatialAudio';
-import { Zap, Orbit, RefreshCw, Move3d, Sparkles, Shield, Binary, Network } from 'lucide-react';
+import { 
+  Orbit, 
+  RefreshCw, 
+  Sparkles, 
+  Shield, 
+  Binary, 
+  Network, 
+  CheckCircle2, 
+  ShieldCheck 
+} from 'lucide-react';
 
 type GeometryType = 'ELLIPTIC_CURVE' | 'ZK_TREFOIL' | 'MERKLE_CORE' | 'CROSS_CHAIN_HELIX';
 type MaterialType = 'LIQUID_CHROME' | 'HOLO_WIREFRAME' | 'IRIDESCENT_GLASS';
+
+interface ActiveVerification {
+  group: THREE.Group;
+  light: THREE.PointLight;
+  outerRing: THREE.Mesh;
+  innerRing: THREE.Mesh;
+  hexReticle: THREE.Mesh;
+  particles: THREE.Points;
+  particleVelocities: THREE.Vector3[];
+  progress: number;
+  duration: number;
+}
+
+interface VerificationTag {
+  id: number;
+  x: number;
+  y: number;
+  label: string;
+  hash: string;
+}
+
+const AUDIT_LABELS = [
+  'INVARIANT_CHECK: PASS',
+  'ZK_PROOF: VALIDATED',
+  'STATE_ROOT: ATTESTED',
+  'KZG_COMMITMENT: OK',
+  'BYTECODE: NO_VULN',
+  'ORACLE_SYNC: CONFIRMED'
+];
+
+const getRandomHex = () => {
+  const chars = '0123456789ABCDEF';
+  let s = '0x';
+  for (let i = 0; i < 4; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  s += '...';
+  for (let i = 0; i < 2; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+};
 
 export const HyperCoreCanvas3D: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -14,6 +61,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
   const [geometryType, setGeometryType] = useState<GeometryType>('ELLIPTIC_CURVE');
   const [materialType, setMaterialType] = useState<MaterialType>('LIQUID_CHROME');
   const [isRotating, setIsRotating] = useState(true);
+  const [tags, setTags] = useState<VerificationTag[]>([]);
 
   // References for three.js objects
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -23,34 +71,164 @@ export const HyperCoreCanvas3D: React.FC = () => {
   const particlesRef = useRef<THREE.Points | null>(null);
   const ringsRef = useRef<THREE.Group | null>(null);
 
-  // Shockwave ring
-  const shockwaveRef = useRef<{ mesh: THREE.Mesh; scale: number; active: boolean } | null>(null);
+  // Active verification effects pool
+  const activeVerificationsRef = useRef<ActiveVerification[]>([]);
+
+  // Raycasting references
+  const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
+  const mouseVecRef = useRef<THREE.Vector2>(new THREE.Vector2());
 
   // Shapes metadata for crypto HUD
-  const shapesMeta: Record<GeometryType, { name: string; tag: string; spec: string }> = {
+  const shapesMeta: Record<GeometryType, { name: string; tag: string; spec: string; color: number }> = {
     ELLIPTIC_CURVE: {
       name: 'ELLIPTIC CURVE',
       tag: 'ECC secp256k1',
-      spec: 'y² = x³ + 7 mod p • Continuous Braided Topological Manifold'
+      spec: 'y² = x³ + 7 mod p • Continuous Braided Topological Manifold',
+      color: 0x00ffa3
     },
     ZK_TREFOIL: {
       name: 'ZK-SNARK TREFOIL',
       tag: 'Recursive Proofs',
-      spec: 'Dual-Intertwined Trefoil Knot • Universal KZG Polynomial Embedding'
+      spec: 'Dual-Intertwined Trefoil Knot • Universal KZG Polynomial Embedding',
+      color: 0x00e5ff
     },
     MERKLE_CORE: {
       name: 'MERKLE CONSENSUS CORE',
       tag: 'BFT Consensus',
-      spec: 'Stellated Validator Node Lattice & State Root Geometry'
+      spec: 'Stellated Validator Node Lattice & State Root Geometry',
+      color: 0xa855f7
     },
     CROSS_CHAIN_HELIX: {
       name: 'CROSS-CHAIN DUAL HELIX',
       tag: 'Atomic Relayer',
-      spec: 'Non-colliding Interleaved Torus Manifold T(4, 5) • State Bridging'
+      spec: 'Non-colliding Interleaved Torus Manifold T(4, 5) • State Bridging',
+      color: 0x00ffa3
     }
   };
 
   const currentMeta = shapesMeta[geometryType];
+
+  // Helper to spawn 3D cryptographic verification effect at specific point & normal
+  const spawnVerificationAtPoint = useCallback((
+    point: THREE.Vector3,
+    normal: THREE.Vector3,
+    accentColorHex: number
+  ) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    // 1. Group at hitPoint oriented along surface normal
+    const group = new THREE.Group();
+    group.position.copy(point);
+
+    const quat = new THREE.Quaternion();
+    quat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal.clone().normalize());
+    group.quaternion.copy(quat);
+
+    // 2. High-intensity localized flash light at the impact point
+    const pointLight = new THREE.PointLight(accentColorHex, 75, 9);
+    pointLight.position.set(0, 0, 0.2);
+    group.add(pointLight);
+
+    // 3. Outer Concentric Invariant Ring
+    const outerGeo = new THREE.RingGeometry(0.08, 0.14, 64);
+    const outerMat = new THREE.MeshBasicMaterial({
+      color: accentColorHex,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const outerRing = new THREE.Mesh(outerGeo, outerMat);
+    group.add(outerRing);
+
+    // 4. Inner High-Speed Verification Ring
+    const innerGeo = new THREE.RingGeometry(0.025, 0.055, 48);
+    const innerMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const innerRing = new THREE.Mesh(innerGeo, innerMat);
+    group.add(innerRing);
+
+    // 5. Cryptographic Hexagonal Target Reticle
+    const hexGeo = new THREE.RingGeometry(0.18, 0.21, 6);
+    const hexMat = new THREE.MeshBasicMaterial({
+      color: accentColorHex,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const hexReticle = new THREE.Mesh(hexGeo, hexMat);
+    group.add(hexReticle);
+
+    // 6. Dispersing Attestation Proof Particles (Hemispherical burst along normal)
+    const particleCount = 38;
+    const pPositions = new Float32Array(particleCount * 3);
+    const pColors = new Float32Array(particleCount * 3);
+    const particleVelocities: THREE.Vector3[] = [];
+
+    const baseColor = new THREE.Color(accentColorHex);
+    const whiteColor = new THREE.Color(0xffffff);
+
+    for (let i = 0; i < particleCount; i++) {
+      pPositions[i * 3] = 0;
+      pPositions[i * 3 + 1] = 0;
+      pPositions[i * 3 + 2] = 0.05;
+
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.random() * (Math.PI / 3);
+      const speed = 1.3 + Math.random() * 2.6;
+
+      const vx = Math.sin(phi) * Math.cos(theta) * speed;
+      const vy = Math.sin(phi) * Math.sin(theta) * speed;
+      const vz = Math.cos(phi) * speed;
+      particleVelocities.push(new THREE.Vector3(vx, vy, vz));
+
+      const col = Math.random() > 0.4 ? baseColor : whiteColor;
+      pColors[i * 3] = col.r;
+      pColors[i * 3 + 1] = col.g;
+      pColors[i * 3 + 2] = col.b;
+    }
+
+    const pGeo = new THREE.BufferGeometry();
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
+    pGeo.setAttribute('color', new THREE.BufferAttribute(pColors, 3));
+
+    const pMat = new THREE.PointsMaterial({
+      size: 0.065,
+      vertexColors: true,
+      transparent: true,
+      opacity: 1.0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    const particles = new THREE.Points(pGeo, pMat);
+    group.add(particles);
+
+    scene.add(group);
+
+    // Push into active animation pool
+    activeVerificationsRef.current.push({
+      group,
+      light: pointLight,
+      outerRing,
+      innerRing,
+      hexReticle,
+      particles,
+      particleVelocities,
+      progress: 0,
+      duration: 0.8
+    });
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -107,7 +285,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
     pointLight3.position.set(0, 7, -5);
     scene.add(pointLight3);
 
-    // Subtle center glow light
+    // Center glow light
     const centerGlowLight = new THREE.PointLight(0x00ffa3, 20, 15);
     centerGlowLight.position.set(0, 0, 0);
     scene.add(centerGlowLight);
@@ -160,7 +338,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
     particlesRef.current = particles;
     scene.add(particles);
 
-    // 6. Orbital Gyroscopic Rings with hash ticks
+    // 6. Orbital Gyroscopic Rings
     const ringsGroup = new THREE.Group();
     ringsRef.current = ringsGroup;
 
@@ -179,20 +357,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
     scene.add(ringsGroup);
 
-    // 7. Shockwave Plane
-    const shockGeo = new THREE.RingGeometry(0.1, 0.3, 64);
-    const shockMat = new THREE.MeshBasicMaterial({
-      color: 0x00ffa3,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0
-    });
-    const shockMesh = new THREE.Mesh(shockGeo, shockMat);
-    shockMesh.rotation.x = Math.PI / 2;
-    scene.add(shockMesh);
-    shockwaveRef.current = { mesh: shockMesh, scale: 0.1, active: false };
-
-    // 8. Resize Handler
+    // 7. Resize Handler
     const onResize = () => {
       if (!container) return;
       const w = container.clientWidth;
@@ -204,7 +369,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
     window.addEventListener('resize', onResize);
 
-    // 9. Animation Loop
+    // 8. Animation Loop
     let animId: number;
     let clock = new THREE.Clock();
 
@@ -233,16 +398,53 @@ export const HyperCoreCanvas3D: React.FC = () => {
         particlesRef.current.rotation.z = elapsed * 0.015;
       }
 
-      // Handle shockwave expansion
-      if (shockwaveRef.current && shockwaveRef.current.active) {
-        const sw = shockwaveRef.current;
-        sw.scale += delta * 12;
-        sw.mesh.scale.set(sw.scale, sw.scale, sw.scale);
-        (sw.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.9 - sw.scale * 0.12);
+      // Update and animate active cryptographic verifications
+      const activeList = activeVerificationsRef.current;
+      for (let i = activeList.length - 1; i >= 0; i--) {
+        const item = activeList[i];
+        item.progress += delta / item.duration;
 
-        if (sw.scale > 7.5) {
-          sw.active = false;
-          (sw.mesh.material as THREE.MeshBasicMaterial).opacity = 0;
+        if (item.progress >= 1.0) {
+          // Cleanup finished effect
+          scene.remove(item.group);
+          item.outerRing.geometry.dispose();
+          (item.outerRing.material as THREE.Material).dispose();
+          item.innerRing.geometry.dispose();
+          (item.innerRing.material as THREE.Material).dispose();
+          item.hexReticle.geometry.dispose();
+          (item.hexReticle.material as THREE.Material).dispose();
+          item.particles.geometry.dispose();
+          (item.particles.material as THREE.Material).dispose();
+          activeList.splice(i, 1);
+        } else {
+          const t = item.progress;
+
+          // Decay light flash
+          item.light.intensity = 75 * Math.max(0, 1 - t * 1.6);
+
+          // Expand concentric rings
+          item.outerRing.scale.setScalar(0.2 + t * 4.6);
+          (item.outerRing.material as THREE.MeshBasicMaterial).opacity = Math.max(0, (1 - t) * 0.9);
+
+          item.innerRing.scale.setScalar(0.1 + t * 3.0);
+          (item.innerRing.material as THREE.MeshBasicMaterial).opacity = Math.max(0, (1 - t) * 0.95);
+
+          // Rotate and scale hexagonal target reticle
+          item.hexReticle.rotation.z += delta * 1.5;
+          item.hexReticle.scale.setScalar(0.7 + t * 2.2);
+          (item.hexReticle.material as THREE.MeshBasicMaterial).opacity = Math.max(0, (1 - t * 1.3) * 0.85);
+
+          // Disperse proof particles
+          const posAttr = item.particles.geometry.attributes.position as THREE.BufferAttribute;
+          for (let pIdx = 0; pIdx < item.particleVelocities.length; pIdx++) {
+            const v = item.particleVelocities[pIdx];
+            posAttr.setX(pIdx, posAttr.getX(pIdx) + v.x * delta);
+            posAttr.setY(pIdx, posAttr.getY(pIdx) + v.y * delta);
+            posAttr.setZ(pIdx, posAttr.getZ(pIdx) + v.z * delta);
+            v.multiplyScalar(0.95); // Drag damping
+          }
+          posAttr.needsUpdate = true;
+          (item.particles.material as THREE.PointsMaterial).opacity = Math.max(0, (1 - t) * 0.9);
         }
       }
 
@@ -257,7 +459,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
       controls.dispose();
       renderer.dispose();
     };
-  }, []);
+  }, [isRotating]);
 
   // Update auto-rotate in controls when state changes
   useEffect(() => {
@@ -484,20 +686,83 @@ export const HyperCoreCanvas3D: React.FC = () => {
     }
   }, [geometryType, materialType]);
 
-  // Trigger Shockwave Burst
-  const triggerPulse = () => {
-    spatialAudio.playWarp();
+  // Perform Raycast at the exact clicked screen coordinates and spawn localized cryptographic verification
+  const triggerVerificationClick = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    const camera = cameraRef.current;
+    const meshGroup = meshGroupRef.current;
+    if (!canvas || !camera || !meshGroup) return;
 
-    if (shockwaveRef.current) {
-      shockwaveRef.current.scale = 0.5;
-      shockwaveRef.current.active = true;
-      (shockwaveRef.current.mesh.material as THREE.MeshBasicMaterial).opacity = 0.85;
+    const rect = canvas.getBoundingClientRect();
+    const relX = clientX - rect.left;
+    const relY = clientY - rect.top;
+
+    // Normalized Device Coordinates (-1 to +1)
+    const mouseX = (relX / rect.width) * 2 - 1;
+    const mouseY = -(relY / rect.height) * 2 + 1;
+    mouseVecRef.current.set(mouseX, mouseY);
+
+    raycasterRef.current.setFromCamera(mouseVecRef.current, camera);
+    const intersects = raycasterRef.current.intersectObjects(meshGroup.children, true);
+
+    let hitPoint: THREE.Vector3;
+    let hitNormal: THREE.Vector3;
+    let isDirectHit = false;
+
+    if (intersects.length > 0) {
+      const hit = intersects[0];
+      hitPoint = hit.point.clone();
+      isDirectHit = true;
+
+      if (hit.face) {
+        const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
+        hitNormal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+      } else {
+        hitNormal = camera.position.clone().sub(hitPoint).normalize();
+      }
+    } else {
+      // Raycast onto plane through origin facing camera
+      const plane = new THREE.Plane();
+      plane.setFromNormalAndCoplanarPoint(
+        camera.getWorldDirection(new THREE.Vector3()).negate(),
+        new THREE.Vector3(0, 0, 0)
+      );
+      const target = new THREE.Vector3();
+      raycasterRef.current.ray.intersectPlane(plane, target);
+      hitPoint = target || new THREE.Vector3(0, 0, 0);
+      hitNormal = camera.position.clone().sub(hitPoint).normalize();
     }
+
+    // Play pristine crystalline harmonic chime (cryptographic seal)
+    spatialAudio.playVerificationPing(0.95 + Math.random() * 0.12);
+
+    // Spawn localized 3D cryptographic reticle & particle attestation
+    spawnVerificationAtPoint(hitPoint, hitNormal, currentMeta.color);
+
+    // Add floating HUD verification tag in DOM at the click location
+    const tagId = Date.now() + Math.random();
+    const newTag: VerificationTag = {
+      id: tagId,
+      x: relX,
+      y: relY,
+      label: isDirectHit ? AUDIT_LABELS[Math.floor(Math.random() * AUDIT_LABELS.length)] : 'TOPOLOGY_ATTESTED',
+      hash: getRandomHex()
+    };
+
+    setTags(prev => [...prev.slice(-4), newTag]);
+    setTimeout(() => {
+      setTags(prev => prev.filter(t => t.id !== tagId));
+    }, 1200);
   };
 
   const handleSelectGeometry = (type: GeometryType) => {
     setGeometryType(type);
-    triggerPulse();
+    if (cameraRef.current) {
+      const centerPoint = new THREE.Vector3(0, 0, 0);
+      const normal = cameraRef.current.position.clone().normalize();
+      spawnVerificationAtPoint(centerPoint, normal, shapesMeta[type].color);
+      spatialAudio.playVerificationPing(1.15);
+    }
   };
 
   const handleSelectMaterial = (type: MaterialType) => {
@@ -525,10 +790,13 @@ export const HyperCoreCanvas3D: React.FC = () => {
     const dist = Math.hypot(dx, dy);
     const elapsed = performance.now() - pointerStartRef.current.time;
 
+    const clientX = e.clientX;
+    const clientY = e.clientY;
     pointerStartRef.current = null;
 
+    // Distinguish stationary tap (< 6px movement, < 350ms duration) from 3D camera drag
     if (dist < 6 && elapsed < 350) {
-      triggerPulse();
+      triggerVerificationClick(clientX, clientY);
     }
   };
 
@@ -544,8 +812,32 @@ export const HyperCoreCanvas3D: React.FC = () => {
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-[540px] lg:h-[640px] rounded-3xl overflow-hidden border border-white/15 bg-gradient-to-b from-[#090416] via-[#04020a] to-[#020106] shadow-2xl group"
+      className="relative w-full h-[540px] lg:h-[640px] rounded-3xl overflow-hidden border border-white/15 bg-gradient-to-b from-[#090416] via-[#04020a] to-[#020106] shadow-2xl group select-none"
     >
+      <style>{`
+        @keyframes cryptoAuditBadge {
+          0% {
+            opacity: 0;
+            transform: translate(-50%, 0) scale(0.75);
+          }
+          15% {
+            opacity: 1;
+            transform: translate(-50%, -10px) scale(1.03);
+          }
+          75% {
+            opacity: 0.95;
+            transform: translate(-50%, -22px) scale(1);
+          }
+          100% {
+            opacity: 0;
+            transform: translate(-50%, -34px) scale(0.92);
+          }
+        }
+        .crypto-audit-tag {
+          animation: cryptoAuditBadge 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+      `}</style>
+
       {/* 3D Canvas Viewport with Free Orbit Controls and Click-vs-Drag differentiation */}
       <canvas
         ref={canvasRef}
@@ -553,6 +845,21 @@ export const HyperCoreCanvas3D: React.FC = () => {
         onPointerUp={handlePointerUp}
         className="w-full h-full block cursor-grab active:cursor-grabbing"
       />
+
+      {/* Floating Invariant Attestation Badges spawned at exact click coordinates */}
+      {tags.map((tag) => (
+        <div
+          key={tag.id}
+          style={{ left: `${tag.x}px`, top: `${tag.y}px` }}
+          className="absolute pointer-events-none z-30"
+        >
+          <div className="crypto-audit-tag flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#040812]/92 backdrop-blur-xl border border-emerald-400/50 shadow-[0_0_24px_rgba(0,255,163,0.35)] text-emerald-300 font-mono text-xs whitespace-nowrap">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 animate-pulse" />
+            <span className="font-bold tracking-wider">{tag.label}</span>
+            <span className="text-white/40 text-[11px] font-normal pl-1 border-l border-white/20">{tag.hash}</span>
+          </div>
+        </div>
+      ))}
 
       {/* Top Floating Spatial HUD with Crypto Metadata */}
       <div className="absolute top-4 left-4 right-4 z-20 flex flex-wrap items-center justify-between gap-3 pointer-events-none">
@@ -585,9 +892,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
       {/* Floating Free Rotation & Click Helper Hint */}
       <div className="absolute top-26 left-4 z-20 pointer-events-none">
-        <div className="bg-black/55 backdrop-blur-md border border-white/10 px-3.5 py-1.5 rounded-xl text-[11px] text-gray-400 font-mono flex items-center gap-2">
-          <Move3d className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-          <span>ЛКМ клик: импульс • Зажмите ЛКМ: вращение 360° • Колесико: зум</span>
+        <div className="bg-black/55 backdrop-blur-md border border-white/10 px-3.5 py-1.5 rounded-xl text-[11px] text-gray-300 font-mono flex items-center gap-2">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span>ЛКМ клик по узлу: криптографический аудит в точке касания • Вращение 360° • Зум</span>
         </div>
       </div>
 

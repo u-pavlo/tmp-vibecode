@@ -60,6 +60,41 @@ class SpatialAudioEngine {
     }
   }
 
+  // Crystalline Cryptographic Attestation Chime (Security Invariant Seal)
+  public playVerificationPing(pitchRatio: number = 1.0) {
+    if (!this.isEnabled || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const baseFreq = 1046.5 * pitchRatio; // C6 note
+
+      // Multi-harmonic crystalline resonance (Root + Perfect Fifth + Octave)
+      const frequencies = [baseFreq, baseFreq * 1.498, baseFreq * 2];
+      const gains = [0.08, 0.045, 0.025];
+
+      frequencies.forEach((freq, idx) => {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = idx === 0 ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.015);
+        osc.frequency.exponentialRampToValueAtTime(freq * 1.015, now + 0.4);
+
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(gains[idx], now + 0.008 + idx * 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.48);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start(now + idx * 0.015);
+        osc.stop(now + 0.48);
+      });
+    } catch {
+      // Safe fallback
+    }
+  }
+
   // 3D Geometry Warp Shockwave Sound
   public playWarp() {
     if (!this.isEnabled || !this.ctx) return;
