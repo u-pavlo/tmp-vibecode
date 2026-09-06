@@ -13,351 +13,21 @@ import {
   X,
   AlertCircle,
   CheckCircle2,
-  Cpu,
-  Network,
-  Shield,
   Plus,
-  Minus
+  Minus,
+  Maximize2
 } from 'lucide-react';
-
-export type ChainKey = 'ETHEREUM' | 'SOLANA' | 'ARBITRUM' | 'STARKNET' | 'CUSTOM';
-export type MaterialType = 'LIQUID_CHROME' | 'HOLO_WIREFRAME' | 'IRIDESCENT_GLASS';
-export type DockMode = 'RIGHT' | 'BOTTOM' | 'COLLAPSED';
-
-export interface CurveParams {
-  a: number; // Weierstrass parameter a (-10 .. 10)
-  b: number; // Weierstrass parameter b (-10 .. 20)
-  p: number; // Torus winding / petals p (1 .. 8)
-  q: number; // Torus winding / loops q (1 .. 12)
-  twist: number; // Manifold twist / phase (0.0 .. 3.0)
-  tubeRadius: number; // Tube caliber / radius (0.15 .. 0.55)
-}
-
-export interface ChainPreset {
-  id: ChainKey;
-  name: string;
-  shortName: string;
-  badge: string;
-  curveType: string;
-  formula: string;
-  details: string;
-  zkAttestation: string;
-  params: CurveParams;
-  primaryColor: number;
-  primaryHex: string;
-  secondaryColor: number;
-  secondaryHex: string;
-  icon: React.ComponentType<{ className?: string }>;
-  auditLabels: string[];
-}
-
-export const computeDiscriminant = (a: number, b: number): number => {
-  return -16 * (4 * Math.pow(a, 3) + 27 * Math.pow(b, 2));
-};
-
-export interface ParseFormulaResult {
-  success: boolean;
-  params?: Partial<CurveParams>;
-  detectedType: 'WEIERSTRASS' | 'EDWARDS' | 'PARAMS' | 'NUMBERS' | 'UNKNOWN';
-  message: string;
-}
-
-/**
- * Robust mathematical formula parser for cryptographic curves.
- * Supports:
- * - Weierstrass: y^2 = x^3 + ax + b [mod p]
- * - Edwards: -x^2 + y^2 = 1 - d*x^2*y^2
- * - Parametric assignments: a=-2, b=5, p=4, q=7
- * - Comma separated numbers: -3, 7
- */
-export const parseFormulaInput = (raw: string): ParseFormulaResult => {
-  const text = raw.trim().replace(/\s+/g, ' ');
-  if (!text) {
-    return {
-      success: false,
-      detectedType: 'UNKNOWN',
-      message: 'Enter formula (e.g. y^2 = x^3 - 3x + 5 or a=-2, b=4)'
-    };
-  }
-
-  // 1. Check Weierstrass equation: y^2 = x^3 ... or y² = x³ ...
-  const weierstrassMatch = text.match(
-    /^(?:y\^?2|y²)\s*=\s*(?:x\^?3|x³)(?:\s*([+-])\s*([0-9.]*)\s*\*?\s*x)?(?:\s*([+-])\s*([0-9.]+))?(?:\s*(?:mod|\%)\s*([0-9]+))?/i
-  );
-
-  if (weierstrassMatch) {
-    let a = 0;
-    let b = 0;
-
-    if (weierstrassMatch[1]) {
-      const sign = weierstrassMatch[1] === '-' ? -1 : 1;
-      const coeffStr = weierstrassMatch[2];
-      const coeff = coeffStr === '' ? 1 : parseFloat(coeffStr);
-      if (!isNaN(coeff)) a = sign * coeff;
-    }
-
-    if (weierstrassMatch[3]) {
-      const sign = weierstrassMatch[3] === '-' ? -1 : 1;
-      const constStr = weierstrassMatch[4];
-      const val = parseFloat(constStr);
-      if (!isNaN(val)) b = sign * val;
-    }
-
-    let p: number | undefined;
-    if (weierstrassMatch[5]) {
-      const pVal = parseInt(weierstrassMatch[5]);
-      if (!isNaN(pVal) && pVal > 0) {
-        p = Math.min(8, Math.max(1, (pVal % 8) || 3));
-      }
-    }
-
-    const disc = computeDiscriminant(a, b);
-    const singularText = disc === 0 ? ' (⚠ Cusp Degeneracy)' : ' (✓ Non-Singular)';
-
-    return {
-      success: true,
-      params: { a, b, ...(p ? { p } : {}) },
-      detectedType: 'WEIERSTRASS',
-      message: `Parsed Weierstrass: a = ${a}, b = ${b}${p ? `, p = ${p}` : ''}${singularText}`
-    };
-  }
-
-  // 2. Check Edwards form: -x^2 + y^2 = 1 ... or x^2 + y^2 = 1 ...
-  const edwardsMatch = text.match(
-    /(?:([+-]?)\s*(?:x\^?2|x²))\s*([+-])\s*(?:y\^?2|y²)\s*=\s*1\s*([+-])\s*([0-9./]+)\s*\*?\s*(?:x\^?2\s*\*?\s*y\^?2|x²y²)/i
-  );
-  if (edwardsMatch) {
-    const a = edwardsMatch[1] === '-' ? -1 : 1;
-    let dVal = 1;
-    try {
-      const expr = edwardsMatch[4];
-      if (expr.includes('/')) {
-        const [num, den] = expr.split('/');
-        dVal = parseFloat(num) / parseFloat(den);
-      } else {
-        dVal = parseFloat(expr);
-      }
-    } catch {
-      dVal = 1;
-    }
-    const b = Number((dVal * 2).toFixed(2));
-    return {
-      success: true,
-      params: { a, b, twist: 1.65, p: 2, q: 5 },
-      detectedType: 'EDWARDS',
-      message: `Parsed Edwards: a = ${a}, d ≈ ${dVal.toFixed(4)} (Ed25519 topology)`
-    };
-  }
-
-  // 3. Check key-value assignments: "a=-2, b=5" or "p=4; q=7; a=1"
-  const kvRegex = /([abpqr]|twist|tubeRadius)\s*[:=]\s*([+-]?[0-9.]+)/gi;
-  let match: RegExpExecArray | null;
-  const parsedParams: Partial<CurveParams> = {};
-  let count = 0;
-
-  while ((match = kvRegex.exec(text)) !== null) {
-    const key = match[1].toLowerCase();
-    const val = parseFloat(match[2]);
-    if (!isNaN(val)) {
-      count++;
-      if (key === 'a') parsedParams.a = val;
-      else if (key === 'b') parsedParams.b = val;
-      else if (key === 'p') parsedParams.p = Math.min(8, Math.max(1, Math.round(val)));
-      else if (key === 'q') parsedParams.q = Math.min(12, Math.max(1, Math.round(val)));
-      else if (key === 'twist') parsedParams.twist = Math.min(3.0, Math.max(0, val));
-      else if (key === 'r' || key === 'tuberadius') parsedParams.tubeRadius = Math.min(0.6, Math.max(0.15, val));
-    }
-  }
-
-  if (count > 0) {
-    return {
-      success: true,
-      params: parsedParams,
-      detectedType: 'PARAMS',
-      message: `Parsed ${count} parameters: ${Object.entries(parsedParams).map(([k, v]) => `${k}=${v}`).join(', ')}`
-    };
-  }
-
-  // 4. Check two numbers: "-3, 5" or "0 7"
-  const nums = text.match(/[+-]?[0-9.]+/g);
-  if (nums && nums.length >= 2) {
-    const a = parseFloat(nums[0]);
-    const b = parseFloat(nums[1]);
-    if (!isNaN(a) && !isNaN(b)) {
-      return {
-        success: true,
-        params: { a, b },
-        detectedType: 'NUMBERS',
-        message: `Extracted coefficients: a = ${a}, b = ${b}`
-      };
-    }
-  }
-
-  return {
-    success: false,
-    detectedType: 'UNKNOWN',
-    message: 'Could not parse formula. Example: y^2 = x^3 - 3x + 5 or a=-2, b=4'
-  };
-};
-
-export class BlockchainCryptographicCurve extends THREE.Curve<THREE.Vector3> {
-  a: number;
-  b: number;
-  p: number;
-  q: number;
-  twist: number;
-  scale: number;
-
-  constructor(a: number, b: number, p: number, q: number, twist: number, scale = 1.65) {
-    super();
-    this.a = a;
-    this.b = b;
-    this.p = p;
-    this.q = q;
-    this.twist = twist;
-    this.scale = scale;
-  }
-
-  getPoint(t: number, optionalTarget = new THREE.Vector3()): THREE.Vector3 {
-    // Exact periodicity over [0, 1] using integer windings
-    const u = t * Math.PI * 2 * this.p;
-    const v = t * Math.PI * 2 * this.q;
-
-    // Cryptographic non-linear harmonic resonance
-    const weierstrassMod = Math.sin(u * 2) * (this.a * 0.032) + Math.cos(v) * (this.b * 0.024);
-    const twistWarp = Math.sin(u) * Math.cos(v) * (this.twist * 0.22);
-
-    const r = this.scale * (1.0 + 0.38 * Math.cos(v) + weierstrassMod);
-    const x = r * Math.cos(u) - twistWarp;
-    const y = r * Math.sin(u) + (0.34 + 0.06 * Math.cos(u * 2)) * Math.sin(v * (1 + this.twist * 0.12));
-    const z = this.scale * 0.72 * Math.sin(v) + Math.sin(u) * (this.a * 0.045);
-
-    return optionalTarget.set(x, y, z);
-  }
-}
-
-export const CHAIN_PRESETS: Record<Exclude<ChainKey, 'CUSTOM'>, ChainPreset> = {
-  ETHEREUM: {
-    id: 'ETHEREUM',
-    name: 'Ethereum (EVM)',
-    shortName: 'Ethereum',
-    badge: 'secp256k1 Koblitz',
-    curveType: 'Weierstrass Elliptic Curve',
-    formula: 'y² = x³ + 7 mod p',
-    details: 'secp256k1 Koblitz curve (a=0, b=7). Governs all EVM ECDSA signatures, Ethereum state roots, and account addresses.',
-    zkAttestation: 'ECDSA Invariant: Non-Singular Δ = -21,168',
-    params: {
-      a: 0,
-      b: 7,
-      p: 3,
-      q: 7,
-      twist: 1.0,
-      tubeRadius: 0.42
-    },
-    primaryColor: 0x00ffa3,
-    primaryHex: '#00ffa3',
-    secondaryColor: 0x00e5ff,
-    secondaryHex: '#00e5ff',
-    icon: Orbit,
-    auditLabels: [
-      'SECP256K1_ECDSA: PASS',
-      'STATE_ROOT_SMT: ATTESTED',
-      'EVM_BYTECODE: VERIFIED',
-      'KECCAK256_HASH: SECURE',
-      'NONCE_INVARIANT: VALID'
-    ]
-  },
-  SOLANA: {
-    id: 'SOLANA',
-    name: 'Solana (SVM)',
-    shortName: 'Solana',
-    badge: 'Ed25519 Edwards',
-    curveType: 'Twisted Edwards Curve',
-    formula: '-x² + y² = 1 - (121665/121666)x²y²',
-    details: 'Twisted Edwards curve Ed25519 with complete addition law. Powers 65,000+ TPS parallel execution & EdDSA in Solana Sealevel SVM.',
-    zkAttestation: 'SVM Pipeline: High-Throughput EdDSA Verified',
-    params: {
-      a: -1,
-      b: 2,
-      p: 2,
-      q: 5,
-      twist: 1.65,
-      tubeRadius: 0.38
-    },
-    primaryColor: 0x14f195,
-    primaryHex: '#14f195',
-    secondaryColor: 0x9945ff,
-    secondaryHex: '#9945ff',
-    icon: Cpu,
-    auditLabels: [
-      'ED25519_SCHNORR: PASS',
-      'SEALEVEL_TX: ATTESTED',
-      'POH_TICK_VERIFIED: OK',
-      'BFP_PROGRAM_LOCK: SAFE',
-      'SVM_PARALLEL: CONFIRMED'
-    ]
-  },
-  ARBITRUM: {
-    id: 'ARBITRUM',
-    name: 'Arbitrum (Nitro)',
-    shortName: 'Arbitrum',
-    badge: 'BLS12-381 KZG',
-    curveType: 'Pairing-Friendly BLS Curve',
-    formula: 'y² = x³ + 4 mod p',
-    details: 'Pairing-friendly Barreto-Lynn-Scott curve with embedding degree 12. Powers Arbitrum Nitro fraud proofs & EIP-4844 KZG commitments.',
-    zkAttestation: 'Bilinear Pairing e(P,Q) ∈ 𝔾_T | KZG Root: OK',
-    params: {
-      a: 0,
-      b: 4,
-      p: 4,
-      q: 5,
-      twist: 0.90,
-      tubeRadius: 0.36
-    },
-    primaryColor: 0x28a0f0,
-    primaryHex: '#28a0f0',
-    secondaryColor: 0x00ffa3,
-    secondaryHex: '#00ffa3',
-    icon: Shield,
-    auditLabels: [
-      'BLS12_381_PAIRING: PASS',
-      'KZG_COMMITMENT: OK',
-      'EIP4844_BLOB: ATTESTED',
-      'NITRO_WAVM: VERIFIED',
-      'FRAUD_PROOF_TREE: OK'
-    ]
-  },
-  STARKNET: {
-    id: 'STARKNET',
-    name: 'Starknet (ZK)',
-    shortName: 'Starknet',
-    badge: 'STARK-252 Cairo',
-    curveType: 'Algebraic STARK Field Curve',
-    formula: 'y² = x³ + x + 5 mod p',
-    details: 'Starknet STARK-252 Prime Field curve over 252-bit field. Powers Cairo VM algebraic execution traces & recursive STARK validity proofs.',
-    zkAttestation: 'Cairo Execution Trace: FRI Verified',
-    params: {
-      a: 1,
-      b: 5,
-      p: 3,
-      q: 4,
-      twist: 1.35,
-      tubeRadius: 0.40
-    },
-    primaryColor: 0xff6b4a,
-    primaryHex: '#ff6b4a',
-    secondaryColor: 0xa855f7,
-    secondaryHex: '#a855f7',
-    icon: Network,
-    auditLabels: [
-      'CAIRO_AIR_TRACE: PASS',
-      'FRI_LOW_DEGREE: VERIFIED',
-      'STARK_VALIDITY: ATTESTED',
-      'PEDERSEN_HASH: VALID',
-      'RECURSIVE_PROOF: OK'
-    ]
-  }
-};
+import {
+  ChainKey,
+  MaterialType,
+  DockMode,
+  CurveParams,
+  ParseFormulaResult,
+  BlockchainCryptographicCurve,
+  CHAIN_PRESETS,
+  computeDiscriminant,
+  parseFormulaInput
+} from '../utils/cryptographicCurves';
 
 interface ActiveVerification {
   group: THREE.Group;
@@ -390,10 +60,10 @@ const getRandomHex = () => {
 };
 
 export const HyperCoreCanvas3D: React.FC = () => {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Initialize state with support for URL query params (deep-linking)
+  // Deep-linking URL params
   const [selectedChain, setSelectedChain] = useState<ChainKey>(() => {
     if (typeof window === 'undefined') return 'ETHEREUM';
     const sp = new URLSearchParams(window.location.search);
@@ -433,7 +103,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
     if (d === 'COLLAPSED') return 'COLLAPSED';
     return 'RIGHT';
   });
-  const dockModeRef = useRef<DockMode>(dockMode);
+
+  // User zoom scale control (1.0 = 100%, range: 0.5 .. 2.0)
+  const [userZoomScale, setUserZoomScale] = useState<number>(1.0);
 
   // Direct formula string input & live feedback state
   const [formulaInput, setFormulaInput] = useState<string>('y^2 = x^3 + 7');
@@ -443,13 +115,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
   const [isRotating, setIsRotating] = useState(true);
   const [isExploded, setIsExploded] = useState(false);
   const [tags, setTags] = useState<VerificationTag[]>([]);
-
-  // Smooth camera & mesh transform lerp references
-  const isLabOpenRef = useRef(isLabOpen);
-  const isBottomInit = isLabOpen && dockMode === 'BOTTOM';
-  const offsetXLerpRef = useRef(isLabOpen ? (isBottomInit ? 0 : -1.45) : 0);
-  const offsetYLerpRef = useRef(isBottomInit ? 1.05 : 0);
-  const scaleLerpRef = useRef(isLabOpen ? (isBottomInit ? 0.60 : 0.45) : 1.0);
 
   // Exploded view animation references
   const isExplodedRef = useRef(false);
@@ -461,6 +126,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
   // References for three.js objects
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const meshGroupRef = useRef<THREE.Group | null>(null);
   const particlesRef = useRef<THREE.Points | null>(null);
@@ -476,6 +142,13 @@ export const HyperCoreCanvas3D: React.FC = () => {
   // Active verification effects pool
   const activeVerificationsRef = useRef<ActiveVerification[]>([]);
 
+  // Scale normalization & container geometry tracking
+  const naturalRadiusRef = useRef<number>(2.5);
+  const userZoomScaleRef = useRef<number>(userZoomScale);
+  useEffect(() => {
+    userZoomScaleRef.current = userZoomScale;
+  }, [userZoomScale]);
+
   // Raycasting references
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const mouseVecRef = useRef<THREE.Vector2>(new THREE.Vector2());
@@ -483,15 +156,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
   // Mathematical discriminant calculation
   const discriminant = computeDiscriminant(params.a, params.b);
   const isSingular = discriminant === 0;
-
-  // Sync refs with state
-  useEffect(() => {
-    isLabOpenRef.current = isLabOpen;
-  }, [isLabOpen]);
-
-  useEffect(() => {
-    dockModeRef.current = dockMode;
-  }, [dockMode]);
 
   // Keep formulaInput string in sync when params change
   useEffect(() => {
@@ -517,13 +181,13 @@ export const HyperCoreCanvas3D: React.FC = () => {
         primaryHex: isSingular ? '#f43f5e' : '#00ffa3',
         secondaryColor: 0x00e5ff,
         secondaryHex: '#00e5ff',
-        icon: Cpu,
+        icon: Orbit,
         auditLabels: isSingular
           ? ['⚠ SINGULAR_CUSP: DEGENERATE', '⚠ GROUP_COLLAPSE: INSECURE', '⚠ NON_PRIME_ORDER: FAIL']
           : ['TOPOLOGY_INVARIANT: PASS', 'SMOOTH_MANIFOLD: OK', 'ABELIAN_GROUP: VALID', 'KZG_POLYNOMIAL: ATTESTED']
       };
 
-  // Helper to spawn 3D cryptographic verification effect at specific point & normal
+  // Helper to spawn 3D cryptographic verification effect
   const spawnVerificationAtPoint = (point: THREE.Vector3, normal: THREE.Vector3, accentColorHex: number) => {
     const scene = sceneRef.current;
     if (!scene) return;
@@ -531,17 +195,14 @@ export const HyperCoreCanvas3D: React.FC = () => {
     const effectGroup = new THREE.Group();
     effectGroup.position.copy(point);
 
-    // Align effect orientation with surface normal
     const up = new THREE.Vector3(0, 1, 0);
     const quaternion = new THREE.Quaternion().setFromUnitVectors(up, normal);
     effectGroup.quaternion.copy(quaternion);
 
-    // 1. High-intensity point light flash
     const flashLight = new THREE.PointLight(accentColorHex, 85, 14);
     flashLight.position.set(0, 0.08, 0);
     effectGroup.add(flashLight);
 
-    // 2. Concentric Verification Ring 1 (Outer)
     const ringGeo1 = new THREE.RingGeometry(0.04, 0.08, 36);
     const ringMat1 = new THREE.MeshBasicMaterial({
       color: accentColorHex,
@@ -553,7 +214,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
     ring1.rotation.x = Math.PI / 2;
     effectGroup.add(ring1);
 
-    // 3. Concentric Verification Ring 2 (Inner high-speed pulse)
     const ringGeo2 = new THREE.RingGeometry(0.02, 0.045, 28);
     const ringMat2 = new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -565,7 +225,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
     ring2.rotation.x = Math.PI / 2;
     effectGroup.add(ring2);
 
-    // 4. Hexagonal Cryptographic Target Reticle
     const hexGeo = new THREE.RingGeometry(0.12, 0.14, 6);
     const hexMat = new THREE.MeshBasicMaterial({
       color: accentColorHex,
@@ -577,7 +236,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
     hexMesh.rotation.x = Math.PI / 2;
     effectGroup.add(hexMesh);
 
-    // 5. Radial cryptographic data particle burst
     const pCount = 28;
     const pGeo = new THREE.BufferGeometry();
     const pPos = new Float32Array(pCount * 3);
@@ -623,7 +281,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
     });
   };
 
-  // Reusable materials creator
   const createMaterials = (color1: number, color2: number, matType: MaterialType) => {
     switch (matType) {
       case 'LIQUID_CHROME':
@@ -684,13 +341,14 @@ export const HyperCoreCanvas3D: React.FC = () => {
     }
   };
 
-  // Build or rebuild 3D cryptographic curve geometry
+  // Build 3D curve with Bounding-Sphere Auto-Fit Normalization
   const buildCurveMesh = (
     scene: THREE.Scene,
     p: CurveParams,
     color1: number,
     color2: number,
-    matType: MaterialType
+    matType: MaterialType,
+    zoomFactor: number
   ) => {
     if (meshGroupRef.current) {
       scene.remove(meshGroupRef.current);
@@ -707,10 +365,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
     }
 
     const group = new THREE.Group();
-    // Preserve current lerped transforms
-    group.position.set(offsetXLerpRef.current, offsetYLerpRef.current, 0);
-    group.scale.setScalar(scaleLerpRef.current);
-
     const curve = new BlockchainCryptographicCurve(p.a, p.b, p.p, p.q, p.twist, 1.65);
     const mats = createMaterials(color1, color2, matType);
 
@@ -719,6 +373,21 @@ export const HyperCoreCanvas3D: React.FC = () => {
     const tubularSegments = 260;
     const radialSegments = 24;
     const geom = new THREE.TubeGeometry(curve, tubularSegments, p.tubeRadius, radialSegments, true);
+
+    // BEST PRACTICE: Bounding-Sphere Auto-Scale Normalization
+    // Measures natural geometry bounds so regardless of curve parameters (even Solana twist or huge b),
+    // the figure scales automatically to fit harmoniously with generous negative space
+    geom.computeBoundingSphere();
+    const naturalRadius = geom.boundingSphere?.radius || 2.5;
+    naturalRadiusRef.current = naturalRadius;
+
+    // Aspect-aware target radius: preserves comfortable padding in both portrait & landscape containers
+    const aspect = cameraRef.current?.aspect || 1.0;
+    const targetRadius = Math.min(1.78, 1.78 * Math.max(0.68, aspect)) * zoomFactor;
+    const autoScaleNorm = targetRadius / Math.max(1.1, naturalRadius);
+
+    group.scale.setScalar(autoScaleNorm);
+
     const mainMesh = new THREE.Mesh(geom, mats.main);
     mainMesh.castShadow = true;
     mainMesh.receiveShadow = true;
@@ -768,27 +437,29 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
     scene.add(group);
     meshGroupRef.current = group;
+
+    // Scale orbital rings proportionally to match the auto-fitted curve
+    if (ringsRef.current) {
+      ringsRef.current.scale.setScalar(autoScaleNorm);
+    }
   };
 
-  // Main Three.js Scene Setup
+  // Main Three.js Scene Setup with ResizeObserver
   useEffect(() => {
-    const container = containerRef.current;
+    const container = canvasContainerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    const width = container.clientWidth || 600;
+    const height = container.clientHeight || 600;
 
-    // 1. Scene
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // 2. Camera with FOV 45
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
     camera.position.set(0, 0, 7.5);
     cameraRef.current = camera;
 
-    // 3. Renderer with high performance & pixel ratio
     const renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
@@ -799,20 +470,20 @@ export const HyperCoreCanvas3D: React.FC = () => {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
+    rendererRef.current = renderer;
 
-    // 4. OrbitControls
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.rotateSpeed = 0.85;
     controls.zoomSpeed = 0.9;
     controls.enablePan = false;
-    controls.minDistance = 3.5;
+    controls.minDistance = 3.2;
     controls.maxDistance = 14;
-    controls.target.set(offsetXLerpRef.current, offsetYLerpRef.current, 0);
+    controls.target.set(0, 0, 0);
     controlsRef.current = controls;
 
-    // 5. Dynamic Cryptographic Lighting Grid
+    // Lighting Grid
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
     scene.add(ambientLight);
 
@@ -831,7 +502,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
     scene.add(centerGlow);
     centerGlowLightRef.current = centerGlow;
 
-    // 6. Ambient Data Starfield Particles
+    // Particles
     const particleCount = 220;
     const particleGeometry = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
@@ -873,10 +544,8 @@ export const HyperCoreCanvas3D: React.FC = () => {
     particlesRef.current = particles;
     scene.add(particles);
 
-    // 7. Orbital Gyroscopic Rings
+    // Orbital Gyroscopic Rings
     const ringsGroup = new THREE.Group();
-    ringsGroup.position.set(offsetXLerpRef.current, offsetYLerpRef.current, 0);
-    ringsGroup.scale.setScalar(scaleLerpRef.current);
     ringsRef.current = ringsGroup;
 
     const ringRadius = 3.3;
@@ -896,19 +565,33 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
     scene.add(ringsGroup);
 
-    // 8. Resize Handler
-    const onResize = () => {
-      if (!container) return;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    };
+    // BEST PRACTICE: ResizeObserver on canvas container
+    // When Formula Lab opens/closes (changing container flex width), the canvas seamlessly adapts!
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = entry.contentRect.width;
+        const h = entry.contentRect.height;
+        if (w > 0 && h > 0) {
+          camera.aspect = w / h;
+          camera.updateProjectionMatrix();
+          renderer.setSize(w, h, false);
 
-    window.addEventListener('resize', onResize);
+          // Dynamic scale normalization on container resize (e.g. sidebar toggle)
+          if (meshGroupRef.current && naturalRadiusRef.current) {
+            const dynamicTarget = Math.min(1.78, 1.78 * Math.max(0.68, camera.aspect)) * userZoomScaleRef.current;
+            const norm = dynamicTarget / Math.max(1.1, naturalRadiusRef.current);
+            meshGroupRef.current.scale.setScalar(norm);
+            if (ringsRef.current) {
+              ringsRef.current.scale.setScalar(norm);
+            }
+          }
+        }
+      }
+    });
 
-    // 9. Animation Loop with Dynamic 3D Auto-Framing
+    resizeObserver.observe(container);
+
+    // Animation Loop
     let animId: number;
     const clock = new THREE.Clock();
 
@@ -917,67 +600,23 @@ export const HyperCoreCanvas3D: React.FC = () => {
       const delta = clock.getDelta();
       const elapsed = clock.getElapsedTime();
 
-      // ZERO-OVERLAP 3D AUTO-FRAMING:
-      // In RIGHT dock mode: target center of open 370px window is x = -1.45, scale = 0.45.
-      // This guarantees 60px of completely empty space on both sides of the curve!
-      // In BOTTOM dock mode: target center of open 430px window is y = +1.05, scale = 0.60.
-      let targetOffsetX = 0.0;
-      let targetOffsetY = 0.0;
-      let targetScale = 1.0;
-
-      if (isLabOpenRef.current && dockModeRef.current !== 'COLLAPSED') {
-        if (dockModeRef.current === 'RIGHT') {
-          targetOffsetX = -1.45;
-          targetOffsetY = 0.0;
-          targetScale = 0.45;
-        } else if (dockModeRef.current === 'BOTTOM') {
-          targetOffsetX = 0.0;
-          targetOffsetY = 1.05;
-          targetScale = 0.60;
-        }
-      }
-
-      offsetXLerpRef.current = THREE.MathUtils.lerp(offsetXLerpRef.current, targetOffsetX, 0.08);
-      offsetYLerpRef.current = THREE.MathUtils.lerp(offsetYLerpRef.current, targetOffsetY, 0.08);
-      scaleLerpRef.current = THREE.MathUtils.lerp(scaleLerpRef.current, targetScale, 0.08);
-
-      const currentOffsetX = offsetXLerpRef.current;
-      const currentOffsetY = offsetYLerpRef.current;
-      const currentScale = scaleLerpRef.current;
-
-      if (meshGroupRef.current) {
-        meshGroupRef.current.position.set(currentOffsetX, currentOffsetY, 0);
-        meshGroupRef.current.scale.setScalar(currentScale);
-      }
-      if (ringsRef.current) {
-        ringsRef.current.position.set(currentOffsetX, currentOffsetY, 0);
-        ringsRef.current.scale.setScalar(currentScale);
-      }
-      if (controlsRef.current) {
-        controlsRef.current.target.set(currentOffsetX, currentOffsetY, 0);
-      }
-
-      // Update OrbitControls
       controls.update();
 
-      // Subtle internal rotational oscillation
       if (meshGroupRef.current) {
         meshGroupRef.current.rotation.y += delta * 0.08;
       }
 
-      // Rotate orbital rings
       if (ringsRef.current) {
         ringsRef.current.rotation.x = elapsed * 0.14;
         ringsRef.current.rotation.y = -elapsed * 0.18;
       }
 
-      // Rotate particle field
       if (particlesRef.current) {
         particlesRef.current.rotation.y = elapsed * 0.03;
         particlesRef.current.rotation.z = elapsed * 0.015;
       }
 
-      // Update and animate active cryptographic verifications
+      // Verifications pool animation
       const activeList = activeVerificationsRef.current;
       for (let i = activeList.length - 1; i >= 0; i--) {
         const item = activeList[i];
@@ -1006,10 +645,8 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
           item.hexReticle.rotation.z += delta * 3.5;
           (item.hexReticle.material as THREE.MeshBasicMaterial).opacity = (1.0 - pVal) * 0.75;
-
           item.light.intensity = 85 * (1.0 - pVal);
 
-          // Animate particle velocity and dispersion
           const posAttr = item.particles.geometry.attributes.position as THREE.BufferAttribute;
           const posArray = posAttr.array as Float32Array;
           for (let j = 0; j < item.particleVelocities.length; j++) {
@@ -1023,7 +660,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
         }
       }
 
-      // Exploded View radial decomposition
+      // Exploded View
       const targetExplode = isExplodedRef.current ? 1.0 : 0.0;
       explodeLerpRef.current = THREE.MathUtils.lerp(explodeLerpRef.current, targetExplode, 0.08);
       const curExplode = explodeLerpRef.current;
@@ -1063,13 +700,13 @@ export const HyperCoreCanvas3D: React.FC = () => {
     animate();
 
     return () => {
-      window.removeEventListener('resize', onResize);
+      resizeObserver.disconnect();
       cancelAnimationFrame(animId);
       renderer.dispose();
     };
   }, []);
 
-  // Update geometry when curve parameters or material changes
+  // Rebuild mesh when parameters, material, or zoom changes
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
@@ -1079,28 +716,18 @@ export const HyperCoreCanvas3D: React.FC = () => {
       params,
       activeChainMeta.primaryColor,
       activeChainMeta.secondaryColor,
-      materialType
+      materialType,
+      userZoomScale
     );
 
-    // Update lights
-    if (pointLight1Ref.current) {
-      pointLight1Ref.current.color.setHex(activeChainMeta.primaryColor);
-    }
-    if (pointLight2Ref.current) {
-      pointLight2Ref.current.color.setHex(activeChainMeta.secondaryColor);
-    }
-    if (centerGlowLightRef.current) {
-      centerGlowLightRef.current.color.setHex(activeChainMeta.primaryColor);
-    }
-    if (ringMesh1Ref.current) {
-      (ringMesh1Ref.current.material as THREE.MeshBasicMaterial).color.setHex(activeChainMeta.primaryColor);
-    }
-    if (ringMesh2Ref.current) {
-      (ringMesh2Ref.current.material as THREE.MeshBasicMaterial).color.setHex(activeChainMeta.secondaryColor);
-    }
-  }, [params, materialType, selectedChain]);
+    if (pointLight1Ref.current) pointLight1Ref.current.color.setHex(activeChainMeta.primaryColor);
+    if (pointLight2Ref.current) pointLight2Ref.current.color.setHex(activeChainMeta.secondaryColor);
+    if (centerGlowLightRef.current) centerGlowLightRef.current.color.setHex(activeChainMeta.primaryColor);
+    if (ringMesh1Ref.current) (ringMesh1Ref.current.material as THREE.MeshBasicMaterial).color.setHex(activeChainMeta.primaryColor);
+    if (ringMesh2Ref.current) (ringMesh2Ref.current.material as THREE.MeshBasicMaterial).color.setHex(activeChainMeta.secondaryColor);
+  }, [params, materialType, selectedChain, userZoomScale]);
 
-  // OrbitControls auto-rotation sync
+  // OrbitControls sync
   useEffect(() => {
     if (controlsRef.current) {
       controlsRef.current.autoRotate = isRotating;
@@ -1108,7 +735,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
     }
   }, [isRotating]);
 
-  // Click Attestation via Raycasting
+  // Click Attestation Raycasting
   const triggerVerificationClick = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     const camera = cameraRef.current;
@@ -1142,15 +769,14 @@ export const HyperCoreCanvas3D: React.FC = () => {
         hitNormal = camera.position.clone().sub(hitPoint).normalize();
       }
     } else {
-      const centerTarget = new THREE.Vector3(offsetXLerpRef.current, offsetYLerpRef.current, 0);
       const plane = new THREE.Plane();
       plane.setFromNormalAndCoplanarPoint(
         camera.getWorldDirection(new THREE.Vector3()).negate(),
-        centerTarget
+        new THREE.Vector3(0, 0, 0)
       );
       const target = new THREE.Vector3();
       raycasterRef.current.ray.intersectPlane(plane, target);
-      hitPoint = target || centerTarget;
+      hitPoint = target || new THREE.Vector3(0, 0, 0);
       hitNormal = camera.position.clone().sub(hitPoint).normalize();
     }
 
@@ -1178,22 +804,19 @@ export const HyperCoreCanvas3D: React.FC = () => {
     }, 1800);
   };
 
-  // Switch blockchain curve preset
   const handleSelectChain = (key: ChainKey) => {
     setSelectedChain(key);
     if (key !== 'CUSTOM') {
       const preset = CHAIN_PRESETS[key];
       setParams({ ...preset.params });
       if (cameraRef.current) {
-        const centerPoint = new THREE.Vector3(offsetXLerpRef.current, offsetYLerpRef.current, 0);
         const normal = cameraRef.current.position.clone().normalize();
-        spawnVerificationAtPoint(centerPoint, normal, preset.primaryColor);
+        spawnVerificationAtPoint(new THREE.Vector3(0, 0, 0), normal, preset.primaryColor);
       }
     }
     spatialAudio.playVerificationPing(1.15);
   };
 
-  // Adjust parameters
   const handleParamChange = (param: keyof CurveParams, val: number) => {
     setSelectedChain('CUSTOM');
     setParams((prev) => ({
@@ -1214,7 +837,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
     spatialAudio.playClick(950);
   };
 
-  // Handle direct formula string typing
   const handleFormulaInputChange = (text: string) => {
     setFormulaInput(text);
     const res = parseFormulaInput(text);
@@ -1243,12 +865,46 @@ export const HyperCoreCanvas3D: React.FC = () => {
     }
   };
 
+  const handleZoomChange = (delta: number) => {
+    setUserZoomScale((prev) => {
+      const next = Math.min(2.0, Math.max(0.45, Number((prev + delta).toFixed(2))));
+      if (meshGroupRef.current && naturalRadiusRef.current && cameraRef.current) {
+        const targetRad = Math.min(1.78, 1.78 * Math.max(0.68, cameraRef.current.aspect)) * next;
+        const norm = targetRad / Math.max(1.1, naturalRadiusRef.current);
+        meshGroupRef.current.scale.setScalar(norm);
+        if (ringsRef.current) {
+          ringsRef.current.scale.setScalar(norm);
+        }
+      }
+      return next;
+    });
+    spatialAudio.playClick(850);
+  };
+
+  const handleResetScale = () => {
+    setUserZoomScale(1.0);
+    if (controlsRef.current && cameraRef.current) {
+      controlsRef.current.reset();
+      cameraRef.current.position.set(0, 0, 7.5);
+      controlsRef.current.target.set(0, 0, 0);
+      if (meshGroupRef.current && naturalRadiusRef.current) {
+        const targetRad = Math.min(1.78, 1.78 * Math.max(0.68, cameraRef.current.aspect));
+        const norm = targetRad / Math.max(1.1, naturalRadiusRef.current);
+        meshGroupRef.current.scale.setScalar(norm);
+        if (ringsRef.current) {
+          ringsRef.current.scale.setScalar(norm);
+        }
+      }
+    }
+    spatialAudio.playClick(900);
+  };
+
   const handleSelectMaterial = (type: MaterialType) => {
     setMaterialType(type);
     spatialAudio.playClick(1050);
   };
 
-  // Pointer tracking
+  // Pointer tracking for click-vs-drag differentiation
   const pointerStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -1276,20 +932,12 @@ export const HyperCoreCanvas3D: React.FC = () => {
     }
   };
 
-  const handleResetCamera = () => {
-    if (controlsRef.current && cameraRef.current) {
-      controlsRef.current.reset();
-      cameraRef.current.position.set(0, 0, 7.5);
-      controlsRef.current.target.set(offsetXLerpRef.current, offsetYLerpRef.current, 0);
-      cameraRef.current.lookAt(offsetXLerpRef.current, offsetYLerpRef.current, 0);
-      spatialAudio.playClick(900);
-    }
-  };
-
   return (
+    /* STRUCTURAL SPLIT-VIEWPORT CONTAINER: The 3D Canvas and the Inspector are adjacent flex siblings! */
     <div
-      ref={containerRef}
-      className="relative w-full h-[560px] lg:h-[660px] rounded-3xl overflow-hidden border border-white/15 bg-gradient-to-b from-[#090416] via-[#04020a] to-[#020106] shadow-2xl group select-none"
+      className={`relative w-full h-[580px] lg:h-[680px] rounded-3xl overflow-hidden border border-white/15 bg-gradient-to-b from-[#090416] via-[#04020a] to-[#020106] shadow-2xl group select-none flex ${
+        isLabOpen && dockMode === 'BOTTOM' ? 'flex-col' : 'flex-col md:flex-row'
+      }`}
     >
       <style>{`
         @keyframes cryptoAuditBadge {
@@ -1315,169 +963,208 @@ export const HyperCoreCanvas3D: React.FC = () => {
         }
       `}</style>
 
-      {/* 3D Canvas Viewport */}
-      <canvas
-        ref={canvasRef}
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
-        className="w-full h-full block cursor-grab active:cursor-grabbing"
-      />
-
-      {/* Floating Invariant Attestation Badges */}
-      {tags.map((tag) => (
-        <div
-          key={tag.id}
-          style={{ left: `${tag.x}px`, top: `${tag.y}px` }}
-          className="absolute pointer-events-none z-30"
-        >
-          <div
-            className={`crypto-audit-tag flex items-center gap-2 px-3 py-1.5 rounded-xl backdrop-blur-xl border font-mono text-xs whitespace-nowrap ${
-              tag.isSingular
-                ? 'bg-[#18040a]/92 border-rose-500/60 shadow-[0_0_24px_rgba(244,63,94,0.4)] text-rose-300'
-                : 'bg-[#040812]/92 border-emerald-400/50 shadow-[0_0_24px_rgba(0,255,163,0.35)] text-emerald-300'
-            }`}
-          >
-            {tag.isSingular ? (
-              <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 animate-pulse" />
-            ) : (
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 animate-pulse" />
-            )}
-            <span className="font-bold tracking-wider">{tag.label}</span>
-            <span className="text-white/40 text-[11px] font-normal pl-1 border-l border-white/20">{tag.hash}</span>
-          </div>
-        </div>
-      ))}
-
-      {/* Top Floating HUD */}
+      {/* ========================================================================= */}
+      {/* PANE 1: THE DEDICATED 3D CANVAS VIEWPORT (Resizes dynamically; 0% overlap) */}
+      {/* ========================================================================= */}
       <div
-        className={`absolute top-3 left-3 z-20 pointer-events-none flex flex-col gap-1.5 transition-all duration-300 ${
-          isLabOpen && dockMode === 'RIGHT' ? 'right-3 sm:right-[330px]' : 'right-3'
-        }`}
+        ref={canvasContainerRef}
+        className="relative flex-1 h-full min-w-0 min-h-0 overflow-hidden"
       >
-        {/* Row 1: Primary Controls */}
-        <div className="flex items-center justify-between gap-2">
-          {/* Left: Chain Badge & Formula Lab Toggle */}
-          <div className="flex items-center gap-2 pointer-events-auto">
-            <div className="flex items-center gap-2 bg-black/80 backdrop-blur-xl border border-white/15 px-3 py-1 rounded-full text-xs text-white shadow-lg">
-              <span
-                className="w-2.5 h-2.5 rounded-full animate-pulse shrink-0"
-                style={{ backgroundColor: activeChainMeta.primaryHex }}
-              ></span>
-              <span className="font-bold tracking-wider font-mono text-xs truncate max-w-[120px] sm:max-w-none">
-                {activeChainMeta.name}
-              </span>
-              <span className="text-white/30 hidden md:inline">|</span>
-              <span className="font-mono text-[11px] font-semibold hidden md:inline" style={{ color: activeChainMeta.primaryHex }}>
-                {activeChainMeta.badge}
-              </span>
+        <canvas
+          ref={canvasRef}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          className="w-full h-full block cursor-grab active:cursor-grabbing"
+        />
+
+        {/* Floating Invariant Attestation Badges */}
+        {tags.map((tag) => (
+          <div
+            key={tag.id}
+            style={{ left: `${tag.x}px`, top: `${tag.y}px` }}
+            className="absolute pointer-events-none z-30"
+          >
+            <div
+              className={`crypto-audit-tag flex items-center gap-2 px-3 py-1.5 rounded-xl backdrop-blur-xl border font-mono text-xs whitespace-nowrap ${
+                tag.isSingular
+                  ? 'bg-[#18040a]/92 border-rose-500/60 shadow-[0_0_24px_rgba(244,63,94,0.4)] text-rose-300'
+                  : 'bg-[#040812]/92 border-emerald-400/50 shadow-[0_0_24px_rgba(0,255,163,0.35)] text-emerald-300'
+              }`}
+            >
+              {tag.isSingular ? (
+                <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 animate-pulse" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 animate-pulse" />
+              )}
+              <span className="font-bold tracking-wider">{tag.label}</span>
+              <span className="text-white/40 text-[11px] font-normal pl-1 border-l border-white/20">{tag.hash}</span>
+            </div>
+          </div>
+        ))}
+
+        {/* Top HUD (Constrained inside the 3D viewport pane) */}
+        <div className="absolute top-3 left-3 right-3 z-20 pointer-events-none flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 pointer-events-auto">
+              <div className="flex items-center gap-2 bg-black/80 backdrop-blur-xl border border-white/15 px-3 py-1 rounded-full text-xs text-white shadow-lg">
+                <span
+                  className="w-2.5 h-2.5 rounded-full animate-pulse shrink-0"
+                  style={{ backgroundColor: activeChainMeta.primaryHex }}
+                ></span>
+                <span className="font-bold tracking-wider font-mono text-xs truncate max-w-[130px] sm:max-w-none">
+                  {activeChainMeta.name}
+                </span>
+                <span className="text-white/30 hidden md:inline">|</span>
+                <span className="font-mono text-[11px] font-semibold hidden md:inline" style={{ color: activeChainMeta.primaryHex }}>
+                  {activeChainMeta.badge}
+                </span>
+              </div>
+
+              {!isLabOpen && (
+                <button
+                  onClick={() => {
+                    setIsLabOpen(true);
+                    spatialAudio.playClick(1100);
+                  }}
+                  className="flex items-center gap-1.5 font-mono px-3.5 py-1 rounded-full text-xs font-bold transition-all border cursor-pointer bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 hover:text-white border-cyan-500/40 hover:border-cyan-300 shadow-lg shadow-cyan-500/10"
+                  title="Open Live Formula Lab Inspector"
+                >
+                  <FlaskConical className="w-3.5 h-3.5" />
+                  <span>FORMULA_LAB</span>
+                </button>
+              )}
             </div>
 
-            {!isLabOpen && (
+            <div className="flex items-center gap-1.5 pointer-events-auto">
               <button
                 onClick={() => {
-                  setIsLabOpen(true);
-                  if (dockMode === 'COLLAPSED') setDockMode('RIGHT');
-                  spatialAudio.playClick(1100);
+                  const next = !isExploded;
+                  setIsExploded(next);
+                  isExplodedRef.current = next;
+                  spatialAudio.playExplode(next);
                 }}
-                className="flex items-center gap-1.5 font-mono px-3 py-1 rounded-full text-xs font-bold transition-all border cursor-pointer bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 hover:text-white border-cyan-500/40 hover:border-cyan-300 shadow-lg shadow-cyan-500/10"
-                title="Open Live Formula Lab"
+                className={`flex items-center gap-1.5 font-mono px-3 py-1 rounded-full text-xs font-bold transition-all border cursor-pointer ${
+                  isExploded
+                    ? 'bg-gradient-to-r from-emerald-500 to-cyan-500 text-black border-emerald-400 shadow-xl shadow-emerald-500/30 scale-[1.03]'
+                    : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border-emerald-500/40 hover:border-emerald-400 shadow-lg shadow-emerald-500/10'
+                }`}
+                title="Toggle Exploded Layer Decomposition"
               >
-                <FlaskConical className="w-3.5 h-3.5" />
-                <span>FORMULA_LAB</span>
+                <Layers className={`w-3.5 h-3.5 ${isExploded ? 'animate-pulse' : ''}`} />
+                <span className="hidden sm:inline">{isExploded ? 'COLLAPSE' : 'EXPLODED'}</span>
               </button>
-            )}
+
+              <button
+                onClick={handleResetScale}
+                className="flex items-center gap-1 bg-white/10 hover:bg-white/20 text-gray-200 hover:text-white font-mono px-2.5 py-1 rounded-full text-xs transition-colors border border-white/15 cursor-pointer"
+                title="Reset Camera Angle & Scale"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">RESET</span>
+              </button>
+            </div>
           </div>
 
-          {/* Right: Exploded View & Reset */}
-          <div className="flex items-center gap-2 pointer-events-auto">
-            <button
-              onClick={() => {
-                const next = !isExploded;
-                setIsExploded(next);
-                isExplodedRef.current = next;
-                spatialAudio.playExplode(next);
-              }}
-              className={`flex items-center gap-1.5 font-mono px-3 py-1 rounded-full text-xs font-bold transition-all border cursor-pointer ${
-                isExploded
-                  ? 'bg-gradient-to-r from-emerald-500 to-cyan-500 text-black border-emerald-400 shadow-xl shadow-emerald-500/30 scale-[1.03]'
-                  : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border-emerald-500/40 hover:border-emerald-400 shadow-lg shadow-emerald-500/10'
-              }`}
-              title="Toggle Exploded Layer Decomposition"
-            >
-              <Layers className={`w-3.5 h-3.5 ${isExploded ? 'animate-pulse' : ''}`} />
-              <span className="hidden sm:inline">{isExploded ? 'COLLAPSE' : 'EXPLODED'}</span>
-            </button>
+          {/* Sub-bar: Equation badge & hint (Only displayed when Formula Lab is closed or in bottom dock) */}
+          {(!isLabOpen || dockMode === 'BOTTOM') && (
+            <div className="flex flex-wrap items-center gap-2 pointer-events-auto">
+              <div className="flex items-center gap-2 bg-black/75 backdrop-blur-xl border border-white/15 px-2.5 py-1 rounded-xl text-xs font-mono text-gray-300 shadow-md">
+                <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <span className="font-bold text-white tracking-wide text-[11px] truncate max-w-[180px] sm:max-w-none">
+                  {activeChainMeta.formula}
+                </span>
+                <span className="text-white/20">|</span>
+                <span
+                  className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                    isSingular
+                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  }`}
+                >
+                  {isSingular ? 'Δ = 0 ⚠' : `Δ = ${discriminant.toLocaleString()} ✓`}
+                </span>
+              </div>
 
-            <button
-              onClick={handleResetCamera}
-              className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-gray-200 hover:text-white font-mono px-2.5 py-1 rounded-full text-xs transition-colors border border-white/15 cursor-pointer"
-              title="Reset Camera Angle"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">RESET</span>
-            </button>
-          </div>
+              <div className="hidden xl:flex items-center gap-1.5 bg-black/60 backdrop-blur-md border border-white/10 px-2.5 py-1 rounded-xl text-[10.5px] text-gray-300 font-mono">
+                <ShieldCheck className="w-3 h-3 text-emerald-400 shrink-0" />
+                <span>ЛКМ клик: аудит • Вращение 360°</span>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Row 2: Active Equation Pill & Interaction Helper */}
-        <div className="flex flex-wrap items-center gap-2 pointer-events-auto">
-          <div className="flex items-center gap-2 bg-black/75 backdrop-blur-xl border border-white/15 px-2.5 py-1 rounded-xl text-xs font-mono text-gray-300 shadow-md">
-            <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-            <span className="font-bold text-white tracking-wide text-[11px] truncate max-w-[170px] sm:max-w-none">
-              {activeChainMeta.formula}
-            </span>
-            <span className="text-white/20">|</span>
-            <span
-              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                isSingular
-                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-              }`}
-            >
-              {isSingular ? 'Δ = 0 ⚠' : `Δ = ${discriminant.toLocaleString()} ✓`}
-            </span>
+        {/* BEST PRACTICE: Interactive 3D Zoom & Auto-Scale HUD (Bottom-Right of Canvas) */}
+        <div className="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 bg-[#050814]/90 backdrop-blur-xl border border-white/15 px-2 py-1 rounded-xl font-mono text-[11px] text-gray-300 shadow-xl">
+          <span className="text-[9.5px] text-gray-400 hidden sm:inline mr-0.5">SCALE:</span>
+          <button
+            onClick={() => handleZoomChange(-0.1)}
+            className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white cursor-pointer"
+            title="Zoom Out (-10%)"
+          >
+            <Minus className="w-3 h-3" />
+          </button>
+          <span className="min-w-[36px] text-center font-bold text-cyan-300 font-mono text-[10.5px]">
+            {Math.round(userZoomScale * 100)}%
+          </span>
+          <button
+            onClick={() => handleZoomChange(0.1)}
+            className="w-5 h-5 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white cursor-pointer"
+            title="Zoom In (+10%)"
+          >
+            <Plus className="w-3 h-3" />
+          </button>
+          <button
+            onClick={handleResetScale}
+            className="px-1.5 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 text-[9px] font-bold cursor-pointer transition-colors"
+            title="Reset Auto-Fit to 100%"
+          >
+            FIT
+          </button>
+        </div>
+
+        {/* Bottom Left Dock: Material Switcher & Orbit */}
+        <div className="absolute bottom-3 left-3 z-20 flex items-center gap-2 bg-[#050814]/90 backdrop-blur-2xl border border-white/15 p-1.5 px-2.5 rounded-2xl shadow-xl font-mono text-xs">
+          <div className="flex items-center bg-white/5 p-0.5 rounded-xl border border-white/10">
+            {(['LIQUID_CHROME', 'HOLO_WIREFRAME', 'IRIDESCENT_GLASS'] as MaterialType[]).map((mat) => (
+              <button
+                key={mat}
+                onClick={() => handleSelectMaterial(mat)}
+                className={`px-2 py-0.5 rounded-lg transition-all cursor-pointer text-[10px] ${
+                  materialType === mat
+                    ? 'bg-white/20 text-white font-bold'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {mat === 'LIQUID_CHROME' ? 'Chrome' : mat === 'HOLO_WIREFRAME' ? 'Holo' : 'Glass'}
+              </button>
+            ))}
           </div>
 
-          <div className="hidden xl:flex items-center gap-1.5 bg-black/60 backdrop-blur-md border border-white/10 px-2.5 py-1 rounded-xl text-[10.5px] text-gray-300 font-mono">
-            <ShieldCheck className="w-3 h-3 text-emerald-400 shrink-0" />
-            <span>ЛКМ клик: аудит • Вращение 360°</span>
-          </div>
+          <button
+            onClick={() => setIsRotating(!isRotating)}
+            className={`p-1 rounded-xl border transition-colors cursor-pointer ${
+              isRotating
+                ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
+            }`}
+            title="Toggle Auto-Rotation"
+          >
+            <Orbit className={`w-3.5 h-3.5 ${isRotating ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 
-      {/* Exploded View Floating Layer Annotations */}
-      {isExploded && (
-        <div
-          className={`absolute top-24 z-20 pointer-events-none hidden sm:flex flex-col gap-1.5 font-mono text-[10px] transition-all duration-300 ${
-            isLabOpen && dockMode === 'RIGHT' ? 'right-[330px]' : 'right-4'
-          }`}
-        >
-          <div className="bg-black/85 backdrop-blur-md border border-cyan-400/50 px-3 py-1.5 rounded-xl text-cyan-300 flex items-center gap-2 shadow-lg shadow-cyan-500/10">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-            <span>LAYER 01: MANIFOLD_SHELL [+42% RADIAL]</span>
-          </div>
-          <div className="bg-black/85 backdrop-blur-md border border-emerald-400/50 px-3 py-1.5 rounded-xl text-emerald-300 flex items-center gap-2 shadow-lg shadow-emerald-500/10">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>LAYER 02: CONSENSUS_NODES [+82% DISPERSION]</span>
-          </div>
-          <div className="bg-black/85 backdrop-blur-md border border-purple-400/50 px-3 py-1.5 rounded-xl text-purple-300 flex items-center gap-2 shadow-lg shadow-purple-500/10">
-            <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse"></span>
-            <span>LAYER 03: LASER_SPINE_CORE [1.8x EMISSIVE]</span>
-          </div>
-        </div>
-      )}
-
       {/* ========================================================================= */}
-      {/* MODE 1: DOCKED RIGHT SIDEBAR (3D curve is auto-framed left with zero overlap!) */}
+      {/* PANE 2: THE FORMULA LAB INSPECTOR (Dedicated Side-by-Side Flex Pane!)     */}
       {/* ========================================================================= */}
       {isLabOpen && dockMode === 'RIGHT' && (
         <div
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-2.5 bottom-2.5 right-2.5 w-full sm:w-[315px] max-h-[calc(100%-20px)] overflow-y-auto z-40 bg-[#050814]/94 backdrop-blur-2xl border border-cyan-400/35 p-3 rounded-2xl shadow-[-16px_0_40px_rgba(0,0,0,0.9)] font-mono text-xs text-gray-200 animate-in fade-in slide-in-from-right-6 duration-300 flex flex-col justify-between"
+          className="w-[335px] xl:w-[355px] h-full shrink-0 border-l border-white/10 bg-[#040714]/98 backdrop-blur-2xl flex flex-col justify-between p-3.5 z-20 font-mono text-xs text-gray-200 animate-in fade-in slide-in-from-right-4 duration-300 overflow-y-auto"
         >
           <div>
-            {/* Header with Dock Mode Controls */}
+            {/* Header */}
             <div className="flex items-center justify-between pb-2 border-b border-white/10">
               <div className="flex items-center gap-1.5">
                 <div className="p-1 rounded-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
@@ -1490,12 +1177,11 @@ export const HyperCoreCanvas3D: React.FC = () => {
                       GPU &lt; 2ms
                     </span>
                   </div>
-                  <div className="text-[8px] text-gray-400">Live Parametric Inspector</div>
+                  <div className="text-[8px] text-gray-400">Side-by-Side Inspector</div>
                 </div>
               </div>
 
               <div className="flex items-center gap-1">
-                {/* Switch to Bottom Dock */}
                 <button
                   onClick={() => {
                     setDockMode('BOTTOM');
@@ -1506,29 +1192,17 @@ export const HyperCoreCanvas3D: React.FC = () => {
                 >
                   ⤓ Bottom
                 </button>
-                {/* Minimize Button */}
-                <button
-                  onClick={() => {
-                    setDockMode('COLLAPSED');
-                    spatialAudio.playClick(850);
-                  }}
-                  className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                  title="Minimize Formula Lab"
-                >
-                  <Minus className="w-3 h-3" />
-                </button>
-                {/* Close Button */}
                 <button
                   onClick={() => setIsLabOpen(false)}
                   className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
                   title="Close Inspector"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
 
-            {/* DIRECT EDITABLE FORMULA DISPLAY (Users can type numbers right into formula!) */}
+            {/* DIRECT EDITABLE INLINE FORMULA CARD */}
             <div className="mt-2 p-2 rounded-xl bg-black/60 border border-white/10 flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[8px] text-gray-400 uppercase tracking-wider">ACTIVE FORMULA (CLICK &amp; TYPE):</span>
@@ -1536,13 +1210,13 @@ export const HyperCoreCanvas3D: React.FC = () => {
               </div>
 
               {/* Inline Interactive Number Inputs inside Equation */}
-              <div className="flex items-center justify-center gap-1 font-mono text-xs py-1 px-1 bg-white/5 rounded-lg border border-white/5 whitespace-nowrap">
+              <div className="flex items-center justify-center gap-1 font-mono text-xs py-1.5 px-1 bg-white/5 rounded-lg border border-white/5 whitespace-nowrap">
                 <span className="text-emerald-400 font-bold">y²</span>
                 <span className="text-gray-400">=</span>
                 <span className="text-cyan-400 font-bold">x³</span>
                 <span className="text-gray-400">+</span>
 
-                {/* Inline Editable Param a */}
+                {/* Inline Editable a */}
                 <div className="inline-flex items-center bg-amber-500/15 border border-amber-500/40 hover:border-amber-400 focus-within:border-amber-400 rounded px-1 py-0.5">
                   <input
                     type="number"
@@ -1560,7 +1234,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
                 <span className="text-gray-400">+</span>
 
-                {/* Inline Editable Param b */}
+                {/* Inline Editable b */}
                 <div className="inline-flex items-center bg-purple-500/15 border border-purple-500/40 hover:border-purple-400 focus-within:border-purple-400 rounded px-1 py-0.5">
                   <input
                     type="number"
@@ -1591,7 +1265,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
                 <span className="text-gray-400 text-[10px]">)</span>
               </div>
 
-              {/* Discriminant & Invariant Alert */}
+              {/* Discriminant Alert */}
               <div className="pt-1 border-t border-white/10 flex flex-col gap-1 text-[9px]">
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">Discriminant Δ = -16(4a³+27b²):</span>
@@ -1621,7 +1295,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
               </div>
             </div>
 
-            {/* DIRECT FORMULA WRITER (Type full formulas like y^2 = x^3 - 3x + 5) */}
+            {/* DIRECT FORMULA WRITER (Type full formulas) */}
             <div className="mt-2 p-2 rounded-xl bg-black/50 border border-white/10 flex flex-col gap-1">
               <div className="flex items-center justify-between text-[8px] text-gray-400 uppercase tracking-wider">
                 <span className="flex items-center gap-1 text-cyan-300 font-bold">
@@ -1674,7 +1348,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
                 </div>
               )}
 
-              {/* Quick Formula Template Chips */}
+              {/* Template Chips */}
               <div className="flex flex-wrap gap-1 pt-0.5">
                 {[
                   { label: 'secp256k1', expr: 'y^2 = x^3 + 7' },
@@ -1699,7 +1373,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
               </div>
             </div>
 
-            {/* Quick Chain Presets Grid */}
+            {/* Blockchain Presets */}
             <div className="mt-2">
               <div className="text-[8px] text-gray-400 mb-1 uppercase tracking-wider flex items-center justify-between">
                 <span>LOAD PRESET:</span>
@@ -1742,7 +1416,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
               </div>
             </div>
 
-            {/* Parametric Sliders with Micro-Steppers */}
+            {/* Fine-Tuning Sliders */}
             <div className="mt-2 space-y-1">
               <div className="text-[8px] text-gray-400 uppercase tracking-wider flex items-center justify-between border-b border-white/10 pb-0.5">
                 <span>FINE-TUNING SLIDERS:</span>
@@ -1887,22 +1561,21 @@ export const HyperCoreCanvas3D: React.FC = () => {
           </div>
 
           <div className="pt-1.5 border-t border-white/10 text-[7.5px] text-gray-400 flex items-center justify-between">
-            <span className="text-emerald-400">✓ 3D Auto-Framed (Zero Overlap)</span>
+            <span className="text-emerald-400">✓ Side-by-Side (0% Overlap)</span>
             <span className="text-cyan-400">60 FPS WebGL</span>
           </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* MODE 2: DOCKED BOTTOM DRAWER (Curve elevates to upper 65% with zero overlap!) */}
+      {/* PANE 2: BOTTOM DRAWER DOCK MODE                                          */}
       {/* ========================================================================= */}
       {isLabOpen && dockMode === 'BOTTOM' && (
         <div
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          className="absolute bottom-2.5 left-2.5 right-2.5 h-[230px] z-40 bg-[#050814]/95 backdrop-blur-2xl border border-cyan-400/40 p-2.5 rounded-2xl shadow-[0_-16px_40px_rgba(0,0,0,0.9)] font-mono text-xs text-gray-200 animate-in fade-in slide-in-from-bottom-6 duration-300 flex flex-col justify-between"
+          className="h-[235px] w-full shrink-0 border-t border-white/10 bg-[#040714]/98 backdrop-blur-2xl flex flex-col justify-between p-3 z-20 font-mono text-xs text-gray-200 animate-in fade-in slide-in-from-bottom-4 duration-300"
         >
-          {/* Drawer Header */}
           <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
             <div className="flex items-center gap-2">
               <div className="p-1 rounded-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
@@ -1913,7 +1586,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
                 <span className="text-[8.5px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                   GPU &lt; 2ms
                 </span>
-                <span className="text-[9px] text-emerald-400 hidden sm:inline">• Curve Centered &amp; Elevated (100% Unobstructed)</span>
+                <span className="text-[9px] text-emerald-400 hidden sm:inline">• 100% Unobstructed Panoramic Viewport</span>
               </div>
             </div>
 
@@ -1929,16 +1602,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
                 ⇥ Right Dock
               </button>
               <button
-                onClick={() => {
-                  setDockMode('COLLAPSED');
-                  spatialAudio.playClick(850);
-                }}
-                className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                title="Minimize Formula Lab"
-              >
-                <Minus className="w-3 h-3" />
-              </button>
-              <button
                 onClick={() => setIsLabOpen(false)}
                 className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
                 title="Close Formula Lab"
@@ -1948,16 +1611,15 @@ export const HyperCoreCanvas3D: React.FC = () => {
             </div>
           </div>
 
-          {/* 3-Column Drawer Content */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 flex-1 overflow-hidden">
-            {/* Column 1: Interactive Equation Card & Discriminant */}
+            {/* Column 1: Inline Formula */}
             <div className="flex flex-col justify-between bg-black/50 p-2 rounded-xl border border-white/10">
               <div>
                 <div className="text-[8px] text-gray-400 mb-1 flex items-center justify-between">
                   <span>INLINE FORMULA (CLICK &amp; TYPE):</span>
                   <span className="text-cyan-400 font-bold">WEIERSTRASS</span>
                 </div>
-                <div className="flex items-center justify-center gap-1 font-mono text-xs py-1.5 bg-white/5 rounded-lg border border-white/5 flex-wrap">
+                <div className="flex items-center justify-center gap-1 font-mono text-xs py-1.5 bg-white/5 rounded-lg border border-white/5 whitespace-nowrap">
                   <span className="text-emerald-400 font-bold">y²</span>
                   <span>=</span>
                   <span className="text-cyan-400 font-bold">x³</span>
@@ -2018,7 +1680,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
               </div>
             </div>
 
-            {/* Column 2: Formula Writer & Quick Chips */}
+            {/* Column 2: Formula Writer */}
             <div className="flex flex-col justify-between bg-black/50 p-2 rounded-xl border border-white/10">
               <div>
                 <div className="text-[8px] text-gray-400 mb-1 flex items-center justify-between">
@@ -2045,7 +1707,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
                 </div>
               </div>
 
-              {/* Template Chips */}
               <div className="flex flex-wrap gap-1 pt-1">
                 {[
                   { label: 'secp256k1', expr: 'y^2 = x^3 + 7' },
@@ -2140,146 +1801,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODE 3: COLLAPSED MINIMIZED PILL */}
-      {/* ========================================================================= */}
-      {isLabOpen && dockMode === 'COLLAPSED' && (
-        <button
-          onClick={() => {
-            setDockMode('RIGHT');
-            spatialAudio.playClick(1050);
-          }}
-          className="absolute bottom-3 right-3 z-30 flex items-center gap-2 bg-[#050814]/90 backdrop-blur-xl border border-cyan-400/50 px-3 py-1.5 rounded-xl text-xs font-mono text-cyan-300 shadow-xl hover:bg-cyan-500/20 cursor-pointer animate-in fade-in"
-        >
-          <FlaskConical className="w-3.5 h-3.5 text-cyan-400 animate-bounce" />
-          <span>FORMULA LAB ({activeChainMeta.formula})</span>
-          <span className="text-[10px] text-gray-400 pl-1 border-l border-white/20">Expand ⇥</span>
-        </button>
-      )}
-
-      {/* Bottom Interactive Dock (When Lab is NOT in Bottom mode) */}
-      {dockMode !== 'BOTTOM' && (
-        isLabOpen ? (
-          /* Compact Floating Dock in Bottom-Left when Right sidebar is open */
-          <div className="absolute bottom-3 left-3 z-20 flex items-center gap-2 bg-[#050814]/90 backdrop-blur-2xl border border-white/15 p-1.5 px-2.5 rounded-2xl shadow-xl font-mono text-xs animate-in fade-in slide-in-from-bottom-2 duration-300">
-            <div className="flex items-center gap-1.5 text-gray-400 text-[11px] pr-2 border-r border-white/10">
-              <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: activeChainMeta.primaryHex }} />
-              <span className="text-white font-bold">{activeChainMeta.shortName}</span>
-            </div>
-
-            {/* Material Switcher */}
-            <div className="flex items-center bg-white/5 p-0.5 rounded-xl border border-white/10">
-              {(['LIQUID_CHROME', 'HOLO_WIREFRAME', 'IRIDESCENT_GLASS'] as MaterialType[]).map((mat) => (
-                <button
-                  key={mat}
-                  onClick={() => handleSelectMaterial(mat)}
-                  className={`px-2 py-0.5 rounded-lg transition-all cursor-pointer text-[10px] ${
-                    materialType === mat
-                      ? 'bg-white/20 text-white font-bold'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  {mat === 'LIQUID_CHROME' ? 'Chrome' : mat === 'HOLO_WIREFRAME' ? 'Holo' : 'Glass'}
-                </button>
-              ))}
-            </div>
-
-            {/* Orbit Auto-rotation toggle */}
-            <button
-              onClick={() => setIsRotating(!isRotating)}
-              className={`p-1 rounded-xl border transition-colors cursor-pointer ${
-                isRotating
-                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
-                  : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
-              }`}
-              title="Toggle Auto-Rotation"
-            >
-              <Orbit className={`w-3.5 h-3.5 ${isRotating ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        ) : (
-          /* Full Expanded Dock when Formula Lab is closed */
-          <div className="absolute bottom-3 left-3 right-3 z-20 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2.5 bg-black/85 backdrop-blur-2xl border border-white/15 p-2.5 rounded-2xl transition-all duration-300">
-            {/* Blockchain Cryptographic Curve Switcher */}
-            <div className="flex flex-wrap items-center gap-1 text-xs font-mono">
-              <span className="text-white/50 text-[10px] mr-1 hidden sm:inline">CHAIN_CURVE:</span>
-              {(Object.keys(CHAIN_PRESETS) as Array<Exclude<ChainKey, 'CUSTOM'>>).map((key) => {
-                const item = CHAIN_PRESETS[key];
-                const Icon = item.icon;
-                const isActive = selectedChain === key;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => handleSelectChain(item.id)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer text-xs ${
-                      isActive
-                        ? 'text-black font-bold shadow-lg scale-[1.02]'
-                        : 'bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
-                    }`}
-                    style={{
-                      background: isActive
-                        ? `linear-gradient(135deg, ${item.primaryHex}, ${item.secondaryHex})`
-                        : undefined
-                    }}
-                  >
-                    <Icon className="w-3 h-3 shrink-0" />
-                    <span>{item.shortName}</span>
-                  </button>
-                );
-              })}
-
-              {/* Custom Lab Tab */}
-              <button
-                onClick={() => {
-                  setIsLabOpen(true);
-                  if (dockMode === 'COLLAPSED') setDockMode('RIGHT');
-                  spatialAudio.playClick(1050);
-                }}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer text-xs ${
-                  selectedChain === 'CUSTOM'
-                    ? 'bg-gradient-to-r from-amber-400 to-rose-400 text-black font-bold shadow-lg shadow-amber-500/20 scale-[1.02]'
-                    : 'bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                <FlaskConical className="w-3 h-3 shrink-0 text-amber-400" />
-                <span>Custom Lab 🧪</span>
-              </button>
-            </div>
-
-            {/* Material & Spin Controls */}
-            <div className="flex items-center gap-2 self-end md:self-auto text-xs font-mono">
-              <div className="flex items-center bg-white/5 p-1 rounded-xl border border-white/10">
-                {(['LIQUID_CHROME', 'HOLO_WIREFRAME', 'IRIDESCENT_GLASS'] as MaterialType[]).map((mat) => (
-                  <button
-                    key={mat}
-                    onClick={() => handleSelectMaterial(mat)}
-                    className={`px-2 py-0.5 rounded-lg transition-all cursor-pointer text-[10px] ${
-                      materialType === mat
-                        ? 'bg-white/20 text-white font-bold'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {mat === 'LIQUID_CHROME' ? 'Chrome' : mat === 'HOLO_WIREFRAME' ? 'Holo' : 'Glass'}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                onClick={() => setIsRotating(!isRotating)}
-                className={`p-1.5 rounded-xl border transition-colors cursor-pointer ${
-                  isRotating
-                    ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
-                    : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
-                }`}
-                title="Toggle Auto-Rotation"
-              >
-                <Orbit className={`w-3.5 h-3.5 ${isRotating ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
-          </div>
-        )
       )}
     </div>
   );
