@@ -365,6 +365,35 @@ export const HyperCoreCanvas3D: React.FC = () => {
     spatialAudio.playClick(1050);
   };
 
+  // Pointer tracking to differentiate single left-click from drag/rotation
+  const pointerStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return; // left click only
+    pointerStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      time: performance.now()
+    };
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!pointerStartRef.current || e.button !== 0) return;
+
+    const dx = e.clientX - pointerStartRef.current.x;
+    const dy = e.clientY - pointerStartRef.current.y;
+    const dist = Math.hypot(dx, dy);
+    const elapsed = performance.now() - pointerStartRef.current.time;
+
+    pointerStartRef.current = null;
+
+    // If movement is under 6 pixels and held under 350ms, it is a single click -> trigger shockwave!
+    // If movement is 6+ pixels, user is dragging/rotating with OrbitControls -> do NOT fire shockwave.
+    if (dist < 6 && elapsed < 350) {
+      triggerPulse();
+    }
+  };
+
   const handleResetCamera = () => {
     if (controlsRef.current && cameraRef.current) {
       controlsRef.current.reset();
@@ -379,10 +408,11 @@ export const HyperCoreCanvas3D: React.FC = () => {
       ref={containerRef}
       className="relative w-full h-[520px] lg:h-[620px] rounded-3xl overflow-hidden border border-white/15 bg-gradient-to-b from-[#0a0518] via-[#04020a] to-[#020106] shadow-2xl group"
     >
-      {/* 3D Canvas Viewport with Free Orbit Controls */}
+      {/* 3D Canvas Viewport with Free Orbit Controls and Click-vs-Drag differentiation */}
       <canvas
         ref={canvasRef}
-        onDoubleClick={triggerPulse}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
         className="w-full h-full block cursor-grab active:cursor-grabbing"
       />
 
@@ -398,28 +428,20 @@ export const HyperCoreCanvas3D: React.FC = () => {
         <div className="flex items-center gap-2 pointer-events-auto">
           <button
             onClick={handleResetCamera}
-            className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-gray-200 hover:text-white font-mono px-3 py-2 rounded-full text-xs transition-colors border border-white/15 cursor-pointer"
+            className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-gray-200 hover:text-white font-mono px-3.5 py-2 rounded-full text-xs transition-colors border border-white/15 cursor-pointer"
             title="Reset Camera Angle"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">RESET_VIEW</span>
-          </button>
-
-          <button
-            onClick={triggerPulse}
-            className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-4 py-2 rounded-full text-xs transition-all shadow-lg shadow-emerald-500/25 cursor-pointer hover:scale-105"
-          >
-            <Zap className="w-3.5 h-3.5 fill-current" />
-            <span>SHOCKWAVE</span>
+            <span>RESET_VIEW</span>
           </button>
         </div>
       </div>
 
-      {/* Floating Free Rotation Helper Hint */}
+      {/* Floating Free Rotation & Click Helper Hint */}
       <div className="absolute top-16 left-4 z-20 pointer-events-none">
-        <div className="bg-black/50 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-xl text-[11px] text-gray-300 font-mono flex items-center gap-2">
-          <Move3d className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Зажмите ЛКМ для свободного вращения 360° • Колесико: зум</span>
+        <div className="bg-black/55 backdrop-blur-md border border-white/10 px-3.5 py-1.5 rounded-xl text-[11px] text-gray-300 font-mono flex items-center gap-2">
+          <Move3d className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span>ЛКМ клик: ударная волна • Зажмите ЛКМ: вращение 360° • Колесико: зум</span>
         </div>
       </div>
 
