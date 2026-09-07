@@ -15,7 +15,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Plus,
-  Minus
+  Minus,
+  Palette
 } from 'lucide-react';
 import {
   ChainKey,
@@ -28,6 +29,88 @@ import {
   computeDiscriminant,
   parseFormulaInput
 } from '../utils/cryptographicCurves';
+
+export interface CustomColors {
+  primary: string;
+  secondary: string;
+  core: string;
+}
+
+export interface ColorPreset {
+  id: string;
+  name: string;
+  primary: string;
+  secondary: string;
+  core: string;
+  badge: string;
+}
+
+export const COLOR_PRESETS: ColorPreset[] = [
+  {
+    id: 'cyber_emerald',
+    name: 'Cyber Emerald',
+    primary: '#00ffa3',
+    secondary: '#00e5ff',
+    core: '#ffffff',
+    badge: 'EVM'
+  },
+  {
+    id: 'solana_sunset',
+    name: 'Solana Sunset',
+    primary: '#14f195',
+    secondary: '#9945ff',
+    core: '#ffffff',
+    badge: 'SVM'
+  },
+  {
+    id: 'arbitrum_azure',
+    name: 'Arbitrum Azure',
+    primary: '#28a0f0',
+    secondary: '#00ffa3',
+    core: '#ffffff',
+    badge: 'NITRO'
+  },
+  {
+    id: 'starknet_crimson',
+    name: 'Crimson ZK',
+    primary: '#ff6b4a',
+    secondary: '#a855f7',
+    core: '#fed7aa',
+    badge: 'CAIRO'
+  },
+  {
+    id: 'cyberpunk_neon',
+    name: 'Neon Cyberpunk',
+    primary: '#00f0ff',
+    secondary: '#ff0055',
+    core: '#ffffff',
+    badge: 'NEON'
+  },
+  {
+    id: 'solar_amber',
+    name: 'Solar Amber',
+    primary: '#f59e0b',
+    secondary: '#ef4444',
+    core: '#fef08a',
+    badge: 'BTC'
+  },
+  {
+    id: 'void_violet',
+    name: 'Void Violet',
+    primary: '#a855f7',
+    secondary: '#38bdf8',
+    core: '#e0e7ff',
+    badge: 'VOID'
+  },
+  {
+    id: 'stealth_platinum',
+    name: 'Stealth Platinum',
+    primary: '#94a3b8',
+    secondary: '#38bdf8',
+    core: '#f8fafc',
+    badge: 'TITAN'
+  }
+];
 
 interface ActiveVerification {
   group: THREE.Group;
@@ -65,7 +148,7 @@ export const PARAM_BOUNDS: Record<keyof CurveParams, { min: number; max: number;
   p: { min: 1, max: 8, step: 1 },
   q: { min: 1, max: 8, step: 1 },
   twist: { min: 0, max: 3, step: 0.05 },
-  tubeRadius: { min: 0.04, max: 0.16, step: 0.005 }
+  tubeRadius: { min: 0.08, max: 0.36, step: 0.01 }
 };
 
 export const HyperCoreCanvas3D: React.FC = () => {
@@ -128,15 +211,47 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
   const [materialType, setMaterialType] = useState<MaterialType>('LIQUID_CHROME');
   const [isRotating, setIsRotating] = useState(true);
-  const [isExploded, setIsExploded] = useState(false);
+  const [isExploded, setIsExploded] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const sp = new URLSearchParams(window.location.search);
+    return sp.get('exploded') === '1' || sp.get('explode') === '1';
+  });
   const [tags, setTags] = useState<VerificationTag[]>([]);
 
+  // Interactive Color Studio State with Deep-Linking
+  const [customColors, setCustomColors] = useState<CustomColors | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const sp = new URLSearchParams(window.location.search);
+    const th = sp.get('theme')?.toLowerCase();
+    if (th) {
+      const match = COLOR_PRESETS.find(
+        (p) => p.id.toLowerCase().includes(th) || p.name.toLowerCase().includes(th)
+      );
+      if (match) return { primary: match.primary, secondary: match.secondary, core: match.core };
+    }
+    if (sp.has('c1') && sp.has('c2')) {
+      return {
+        primary: '#' + sp.get('c1')!.replace('#', ''),
+        secondary: '#' + sp.get('c2')!.replace('#', ''),
+        core: sp.has('core') ? '#' + sp.get('core')!.replace('#', '') : '#ffffff'
+      };
+    }
+    return null;
+  });
+
+  const [isColorStudioOpen, setIsColorStudioOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const sp = new URLSearchParams(window.location.search);
+    return sp.get('color') === '1' || sp.get('colors') === '1' || sp.get('studio') === '1';
+  });
+
   // Synchronized state refs for callbacks & ResizeObserver
-  const isExplodedRef = useRef(false);
-  const explodeLerpRef = useRef(0);
+  const isExplodedRef = useRef(isExploded);
+  const explodeLerpRef = useRef(isExploded ? 1.0 : 0);
   const coreLayerRef = useRef<THREE.Group | null>(null);
   const shellLayerRef = useRef<THREE.Group | null>(null);
   const nodesLayerRef = useRef<THREE.Group | null>(null);
+  const wireMeshRef = useRef<THREE.Mesh | null>(null);
   const naturalRadiusRef = useRef<number>(3.2);
   const userZoomScaleRef = useRef<number>(userZoomScale);
   const dockModeRef = useRef<DockMode>(dockMode);
@@ -223,80 +338,118 @@ export const HyperCoreCanvas3D: React.FC = () => {
         ]
       };
 
-  // HIGH-TECH AEROSPACE & OBSIDIAN MATERIAL FACTORY (Zero jelly, precision titanium hardware)
-  const createMaterials = (c1: number, c2: number, matType: MaterialType) => {
+  // Live Effective Colors (Customized or Chain Defaults)
+  const effectivePrimaryHex = customColors?.primary ?? activeChainMeta.primaryHex;
+  const effectiveSecondaryHex = customColors?.secondary ?? activeChainMeta.secondaryHex;
+  const effectiveCoreHex = customColors?.core ?? '#ffffff';
+
+  const effectivePrimaryColor = parseInt(effectivePrimaryHex.replace('#', ''), 16) || activeChainMeta.primaryColor;
+  const effectiveSecondaryColor = parseInt(effectiveSecondaryHex.replace('#', ''), 16) || activeChainMeta.secondaryColor;
+  const effectiveCoreColor = parseInt(effectiveCoreHex.replace('#', ''), 16) || 0xffffff;
+
+  // Randomize Color Studio Themes
+  const handleRandomizeColors = () => {
+    const cyberCombinations = [
+      { p: '#00ffa3', s: '#00e5ff', c: '#ffffff' },
+      { p: '#14f195', s: '#9945ff', c: '#ffffff' },
+      { p: '#28a0f0', s: '#38bdf8', c: '#ffffff' },
+      { p: '#ff0055', s: '#00f0ff', c: '#ffffff' },
+      { p: '#f59e0b', s: '#ec4899', c: '#fef08a' },
+      { p: '#8b5cf6', s: '#06b6d4', c: '#e0e7ff' },
+      { p: '#10b981', s: '#6366f1', c: '#a7f3d0' },
+      { p: '#ec4899', s: '#f43f5e', c: '#fff1f2' },
+      { p: '#38bdf8', s: '#a855f7', c: '#ffffff' },
+      { p: '#e11d48', s: '#fbbf24', c: '#ffe4e6' },
+      { p: '#06b6d4', s: '#f97316', c: '#ffffff' },
+      { p: '#84cc16', s: '#10b981', c: '#ecfccb' }
+    ];
+    const pick = cyberCombinations[Math.floor(Math.random() * cyberCombinations.length)];
+    setCustomColors({
+      primary: pick.p,
+      secondary: pick.s,
+      core: pick.c
+    });
+    spatialAudio.playVerificationPing(1.3);
+  };
+
+  // HIGH-TECH ELEVATED HOLOGRAPHIC & CRYPTOGRAPHIC MATERIAL FACTORY
+  const createMaterials = (c1: number, c2: number, coreColor: number, matType: MaterialType) => {
     let mainMaterial: THREE.Material;
 
     if (matType === 'IRIDESCENT_GLASS') {
-      // Smoked Obsidian Crystal Glass: Dark, refractive, ultra-crisp (NOT green jelly!)
+      // Obsidian Crystal Glass: Deep translucent dark crystal with chromatic attenuation
       mainMaterial = new THREE.MeshPhysicalMaterial({
-        color: 0x070b14,
+        color: 0x050812,
         emissive: c1,
-        emissiveIntensity: 0.08,
+        emissiveIntensity: 0.12,
         roughness: 0.08,
         metalness: 0.15,
-        transmission: 0.85,
+        transmission: 0.84,
         ior: 1.55,
         thickness: 0.45,
         transparent: true,
         opacity: 0.88,
-        clearcoat: 0.8,
+        clearcoat: 0.85,
         clearcoatRoughness: 0.05,
         attenuationColor: new THREE.Color(c1),
-        attenuationDistance: 1.6
+        attenuationDistance: 1.8
       });
     } else if (matType === 'HOLO_WIREFRAME') {
-      // Cyber Carbon / Stealth Matte: Dark technical aerospace carbon with subtle emissive rim
+      // Cyber Mesh / Stealth Lattice: Translucent dark core with bright emissive wireframe
       mainMaterial = new THREE.MeshStandardMaterial({
-        color: 0x060912,
-        emissive: c2,
-        emissiveIntensity: 0.16,
-        roughness: 0.40,
-        metalness: 0.85
+        color: c1,
+        emissive: c1,
+        emissiveIntensity: 0.45,
+        roughness: 0.22,
+        metalness: 0.85,
+        wireframe: true
       });
     } else {
-      // STEALTH TITANIUM (Liquid Chrome): Precision-milled dark titanium with crisp specular glints
+      // STEALTH TITANIUM CHROME (Liquid Chrome): Deep precision-machined titanium with specular reflections
       mainMaterial = new THREE.MeshStandardMaterial({
-        color: 0x0e1422,
+        color: 0x0a101d,
         emissive: c1,
-        emissiveIntensity: 0.10,
-        roughness: 0.20,
-        metalness: 0.94
+        emissiveIntensity: 0.18,
+        roughness: 0.18,
+        metalness: 0.92
       });
     }
 
-    // Machined Titanium Gate Collars
-    const collarMat = new THREE.MeshStandardMaterial({
-      color: 0x141a29,
-      emissive: 0x060a12,
-      roughness: 0.25,
-      metalness: 0.95
-    });
-
-    // Emissive Status LED Bezel on Collars
-    const bezelMat = new THREE.MeshBasicMaterial({
-      color: c1,
+    // Refined Cybernetic Holographic Coordinate Lattice (Elevated original wireframe)
+    const wireframeMat = new THREE.MeshBasicMaterial({
+      color: c2,
+      wireframe: true,
       transparent: true,
-      opacity: 0.95
+      opacity: 0.32,
+      blending: THREE.AdditiveBlending
     });
 
-    // Inner Laser Spine Core
+    // Elevated Faceted Diamond Validation Beacons (Precision quantum cryptographic nodes)
+    const beaconMat = new THREE.MeshStandardMaterial({
+      color: c2,
+      emissive: c2,
+      emissiveIntensity: 0.65,
+      roughness: 0.12,
+      metalness: 0.90
+    });
+
+    // Radiant Central Laser Spine Core
     const coreMat = new THREE.MeshBasicMaterial({
-      color: c1,
+      color: coreColor,
       transparent: true,
       opacity: 0.92,
       blending: THREE.AdditiveBlending
     });
 
-    // Luminous Quantum Photon Sparks
+    // Dynamic Flowing Quantum Photon Sparks
     const photonMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+      color: coreColor,
       transparent: true,
-      opacity: 0.98,
+      opacity: 0.96,
       blending: THREE.AdditiveBlending
     });
 
-    return { main: mainMaterial, core: coreMat, photon: photonMat, collar: collarMat, bezel: bezelMat };
+    return { main: mainMaterial, wireframe: wireframeMat, beacon: beaconMat, core: coreMat, photon: photonMat };
   };
 
   // Spawn Verification Shockwave
@@ -414,11 +567,12 @@ export const HyperCoreCanvas3D: React.FC = () => {
     return { norm, posY };
   };
 
-  // Update Geometry & Scaling
+  // Update Geometry & Scaling (Elevated Cybernetic Holographic Architecture)
   const updateCurveGeometry = (
     p: CurveParams,
     color1: number,
     color2: number,
+    coreColor: number,
     matType: MaterialType,
     zoomFactor: number
   ) => {
@@ -442,13 +596,14 @@ export const HyperCoreCanvas3D: React.FC = () => {
     const group = new THREE.Group();
     const curve = new BlockchainCryptographicCurve(p.a, p.b, p.p, p.q, p.twist, 1.65);
     currentCurveRef.current = curve;
-    const mats = createMaterials(color1, color2, matType);
+    const mats = createMaterials(color1, color2, coreColor, matType);
 
-    // LAYER 1: Slender Architectural Titanium Superconducting Rail
+    const tubularSegments = 300;
+    const effectiveRadius = Math.min(0.36, Math.max(0.08, p.tubeRadius || 0.20));
+
+    // LAYER 1: Solid Main Manifold Shell (Liquid Chrome / Holo Wireframe / Obsidian Glass)
     const shellGroup = new THREE.Group();
-    const tubularSegments = 360;
-    const radialSegments = 16;
-    const effectiveRadius = Math.min(0.14, Math.max(0.04, p.tubeRadius || 0.08));
+    const radialSegments = 28;
     const geom = new THREE.TubeGeometry(curve, tubularSegments, effectiveRadius, radialSegments, true);
     geom.computeVertexNormals();
 
@@ -468,38 +623,37 @@ export const HyperCoreCanvas3D: React.FC = () => {
     mainMesh.castShadow = true;
     mainMesh.receiveShadow = true;
     shellGroup.add(mainMesh);
+
+    // LAYER 2: Elevated Cybernetic Holographic Coordinate Lattice Overlay
+    // Hugs the manifold contour with fine luminous wireframe lines
+    const wireGeom = new THREE.TubeGeometry(curve, 260, effectiveRadius * 1.018, 16, true);
+    const wireMesh = new THREE.Mesh(wireGeom, mats.wireframe);
+    wireMeshRef.current = wireMesh;
+    shellGroup.add(wireMesh);
+
     group.add(shellGroup);
     shellLayerRef.current = shellGroup;
 
-    // LAYER 2: Machined Cryptographic Gate Collars & Quantum Energy Sparks
+    // LAYER 3: Elevated Faceted Diamond Validation Beacons & Flowing Photons
     const nodesGroup = new THREE.Group();
-    const collarCount = 18;
-    const collarRadius = effectiveRadius * 1.55;
-    const collarLength = 0.075;
-    const collarGeo = new THREE.CylinderGeometry(collarRadius, collarRadius, collarLength, 16);
-    const bezelGeo = new THREE.TorusGeometry(collarRadius * 1.04, 0.009, 8, 20);
+    const beaconCount = 48;
+    const beaconGeo = new THREE.OctahedronGeometry(0.048, 0);
 
-    for (let i = 0; i < collarCount; i++) {
-      const t = i / collarCount;
+    for (let i = 0; i < beaconCount; i++) {
+      const t = i / beaconCount;
       const pt = curve.getPoint(t);
       const tangent = curve.getTangent(t).normalize();
       const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent);
 
-      const collarMesh = new THREE.Mesh(collarGeo, mats.collar);
-      collarMesh.position.copy(pt);
-      collarMesh.quaternion.copy(quat);
-      nodesGroup.add(collarMesh);
-
-      const bezelMesh = new THREE.Mesh(bezelGeo, mats.bezel);
-      bezelMesh.position.copy(pt);
-      bezelMesh.quaternion.copy(quat);
-      bezelMesh.rotateX(Math.PI / 2);
-      nodesGroup.add(bezelMesh);
+      const beaconMesh = new THREE.Mesh(beaconGeo, mats.beacon);
+      beaconMesh.position.copy(pt);
+      beaconMesh.quaternion.copy(quat);
+      nodesGroup.add(beaconMesh);
     }
 
-    // Dynamic photon energy pulses streaming along the rail
-    const photonCount = 28;
-    const photonGeo = new THREE.SphereGeometry(effectiveRadius * 0.40, 12, 12);
+    // Dynamic photon energy pulses streaming along the curve
+    const photonCount = 24;
+    const photonGeo = new THREE.SphereGeometry(effectiveRadius * 0.32, 10, 10);
     const flowingMeshes: THREE.Mesh[] = [];
 
     for (let i = 0; i < photonCount; i++) {
@@ -514,9 +668,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
     group.add(nodesGroup);
     nodesLayerRef.current = nodesGroup;
 
-    // LAYER 3: Internal Radiant Laser Spine Core
+    // LAYER 4: Radiant Central Laser Spine Core
     const coreGroup = new THREE.Group();
-    const coreGeom = new THREE.TubeGeometry(curve, tubularSegments, effectiveRadius * 0.28, 8, true);
+    const coreGeom = new THREE.TubeGeometry(curve, 240, effectiveRadius * 0.22, 10, true);
     coreGeom.computeVertexNormals();
     const coreMesh = new THREE.Mesh(coreGeom, mats.core);
     coreGroup.add(coreMesh);
@@ -671,8 +825,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
     // Build initial geometry
     updateCurveGeometry(
       params,
-      activeChainMeta.primaryColor,
-      activeChainMeta.secondaryColor,
+      effectivePrimaryColor,
+      effectiveSecondaryColor,
+      effectiveCoreColor,
       materialType,
       userZoomScale
     );
@@ -715,6 +870,12 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
       if (meshGroupRef.current) {
         meshGroupRef.current.rotation.y += delta * 0.08;
+      }
+
+      // Dynamic breathing of the holographic wireframe lattice
+      if (wireMeshRef.current && wireMeshRef.current.material) {
+        (wireMeshRef.current.material as THREE.MeshBasicMaterial).opacity =
+          0.26 + 0.12 * Math.sin(elapsed * 2.4);
       }
 
       // Silky Flowing Quantum Photon Stream (Dynamic data pulses along curve geodesics)
@@ -839,35 +1000,36 @@ export const HyperCoreCanvas3D: React.FC = () => {
     };
   }, []);
 
-  // Update Three.js on Param, Color, or Zoom Change
+  // Update Three.js on Param, Color, Material, or Zoom Change
   useEffect(() => {
     updateCurveGeometry(
       params,
-      activeChainMeta.primaryColor,
-      activeChainMeta.secondaryColor,
+      effectivePrimaryColor,
+      effectiveSecondaryColor,
+      effectiveCoreColor,
       materialType,
       userZoomScale
     );
 
     if (pointLight1Ref.current) {
-      pointLight1Ref.current.color.setHex(activeChainMeta.primaryColor);
+      pointLight1Ref.current.color.setHex(effectivePrimaryColor);
     }
     if (pointLight2Ref.current) {
-      pointLight2Ref.current.color.setHex(activeChainMeta.secondaryColor);
+      pointLight2Ref.current.color.setHex(effectiveSecondaryColor);
     }
     if (centerGlowLightRef.current) {
-      centerGlowLightRef.current.color.setHex(activeChainMeta.primaryColor);
+      centerGlowLightRef.current.color.setHex(effectivePrimaryColor);
     }
     if (ringMesh1Ref.current) {
-      (ringMesh1Ref.current.material as THREE.MeshBasicMaterial).color.setHex(activeChainMeta.primaryColor);
+      (ringMesh1Ref.current.material as THREE.MeshBasicMaterial).color.setHex(effectivePrimaryColor);
     }
     if (ringMesh2Ref.current) {
-      (ringMesh2Ref.current.material as THREE.MeshBasicMaterial).color.setHex(activeChainMeta.secondaryColor);
+      (ringMesh2Ref.current.material as THREE.MeshBasicMaterial).color.setHex(effectiveSecondaryColor);
     }
     if (rimLightRef.current) {
-      rimLightRef.current.color.setHex(activeChainMeta.secondaryColor);
+      rimLightRef.current.color.setHex(effectiveSecondaryColor);
     }
-  }, [params, selectedChain, materialType, userZoomScale]);
+  }, [params, selectedChain, customColors, materialType, userZoomScale]);
 
   // Raycasting for LMB clicks
   const triggerVerificationClick = (clientX: number, clientY: number) => {
@@ -898,7 +1060,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
       hitPoint = camera.position.clone().add(dir.multiplyScalar(7.5));
     }
 
-    spawnVerificationAtPoint(hitPoint, hitNormal, activeChainMeta.primaryColor);
+    spawnVerificationAtPoint(hitPoint, hitNormal, effectivePrimaryColor);
 
     if (isSingular) {
       spatialAudio.playWarp();
@@ -928,6 +1090,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
   const handleSelectChain = (key: ChainKey) => {
     setSelectedChain(key);
+    setCustomColors(null);
     if (key !== 'CUSTOM') {
       setLastPresetKey(key as Exclude<ChainKey, 'CUSTOM'>);
       const preset = CHAIN_PRESETS[key as Exclude<ChainKey, 'CUSTOM'>];
@@ -980,6 +1143,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
     setParams({ ...preset.params });
     setFormulaInput(preset.formula);
     setParseStatus({ success: true, message: `Reset to ${preset.name}`, detectedType: 'PARAMS' });
+
+    setCustomColors(null);
+    setIsColorStudioOpen(false);
 
     setIsExploded(false);
     isExplodedRef.current = false;
@@ -1193,6 +1359,27 @@ export const HyperCoreCanvas3D: React.FC = () => {
         <div className="flex items-center gap-1.5 ml-auto">
           <button
             onClick={() => {
+              const next = !isColorStudioOpen;
+              setIsColorStudioOpen(next);
+              spatialAudio.playClick(next ? 1050 : 850);
+            }}
+            className={`flex items-center gap-1.5 font-mono px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+              isColorStudioOpen
+                ? 'bg-purple-500/25 text-white border-purple-400 shadow-lg shadow-purple-500/25'
+                : 'bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border-purple-500/30'
+            }`}
+            title="Toggle Color Studio & Themes (Студия цвета и кастомных палитр)"
+          >
+            <Palette className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">COLOR_STUDIO</span>
+            <span className="sm:hidden">COLOR</span>
+            {customColors && (
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+            )}
+          </button>
+
+          <button
+            onClick={() => {
               const next = !isLabOpen;
               setIsLabOpen(next);
               spatialAudio.playClick(next ? 1100 : 900);
@@ -1205,7 +1392,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
             title="Toggle Formula Lab Inspector"
           >
             <FlaskConical className="w-3.5 h-3.5" />
-            <span>{isLabOpen ? 'FORMULA_LAB' : 'FORMULA_LAB'}</span>
+            <span>FORMULA_LAB</span>
           </button>
 
           <button
@@ -1255,6 +1442,237 @@ export const HyperCoreCanvas3D: React.FC = () => {
             onPointerUp={handlePointerUp}
             className="w-full h-full block cursor-grab active:cursor-grabbing"
           />
+
+          {/* ========================================================================= */}
+          {/* FLOATING COLOR STUDIO PANEL                                               */}
+          {/* ========================================================================= */}
+          {isColorStudioOpen && (
+            <div
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className={`absolute z-30 w-80 max-w-[calc(100%-24px)] bg-[#050814]/95 backdrop-blur-2xl border border-white/15 rounded-2xl shadow-2xl p-3.5 font-mono text-xs text-gray-200 animate-in fade-in slide-in-from-top-3 duration-200 ${
+                isLabOpen && dockMode === 'RIGHT' ? 'top-3 left-3' : 'top-3 right-3'
+              }`}
+            >
+              {/* Panel Header */}
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <div className="flex items-center gap-1.5">
+                  <div className="p-1 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    <Palette className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-white text-xs flex items-center gap-1.5">
+                      <span>COLOR STUDIO</span>
+                      <span className="text-[8px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        LIVE GPU
+                      </span>
+                    </div>
+                    <div className="text-[8px] text-gray-400">Cryptographic Chromatic Shaders</div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsColorStudioOpen(false)}
+                  className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                  title="Close Color Studio"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Section 1: 1-Click Curated Presets */}
+              <div className="mt-2.5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[8.5px] uppercase tracking-wider text-gray-400">Curated Cyber Themes:</span>
+                  <button
+                    onClick={handleRandomizeColors}
+                    className="flex items-center gap-1 text-[8.5px] text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
+                    title="Randomize cyber palette"
+                  >
+                    <Sparkles className="w-2.5 h-2.5" />
+                    <span>Shuffle</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  {COLOR_PRESETS.map((preset) => {
+                    const isAct =
+                      customColors?.primary === preset.primary &&
+                      customColors?.secondary === preset.secondary;
+                    return (
+                      <button
+                        key={preset.id}
+                        onClick={() => {
+                          setCustomColors({
+                            primary: preset.primary,
+                            secondary: preset.secondary,
+                            core: preset.core
+                          });
+                          spatialAudio.playVerificationPing(1.2);
+                        }}
+                        className={`flex items-center gap-2 p-1.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          isAct
+                            ? 'bg-white/15 border-purple-400 text-white shadow-md'
+                            : 'bg-black/40 hover:bg-white/5 border-white/10 text-gray-300'
+                        }`}
+                      >
+                        <div className="flex -space-x-1 shrink-0">
+                          <span
+                            className="w-3 h-3 rounded-full border border-black/40"
+                            style={{ backgroundColor: preset.primary }}
+                          />
+                          <span
+                            className="w-3 h-3 rounded-full border border-black/40"
+                            style={{ backgroundColor: preset.secondary }}
+                          />
+                        </div>
+                        <div className="truncate">
+                          <div className="text-[10px] font-bold leading-tight truncate">{preset.name}</div>
+                          <div className="text-[8px] text-gray-400 leading-tight">{preset.badge}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Section 2: Real-time Live Color Pickers */}
+              <div className="mt-3 space-y-1.5">
+                <div className="text-[8.5px] uppercase tracking-wider text-gray-400 mb-1">Custom Shader Channels:</div>
+
+                {/* Primary Channel */}
+                <div className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-white/10">
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-6 h-6 rounded-lg overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
+                      <input
+                        type="color"
+                        value={effectivePrimaryHex}
+                        onChange={(e) => {
+                          setCustomColors({
+                            primary: e.target.value,
+                            secondary: effectiveSecondaryHex,
+                            core: effectiveCoreHex
+                          });
+                        }}
+                        className="absolute -top-3 -left-3 w-12 h-12 cursor-pointer opacity-100"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold text-white">Primary Rail</div>
+                      <div className="text-[8px] text-gray-400">Manifold & Key Lights</div>
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={effectivePrimaryHex.toUpperCase()}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                        setCustomColors({
+                          primary: val,
+                          secondary: effectiveSecondaryHex,
+                          core: effectiveCoreHex
+                        });
+                      }
+                    }}
+                    className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-cyan-300 font-mono text-[10px] text-center uppercase outline-none focus:border-cyan-400"
+                  />
+                </div>
+
+                {/* Secondary Channel */}
+                <div className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-white/10">
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-6 h-6 rounded-lg overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
+                      <input
+                        type="color"
+                        value={effectiveSecondaryHex}
+                        onChange={(e) => {
+                          setCustomColors({
+                            primary: effectivePrimaryHex,
+                            secondary: e.target.value,
+                            core: effectiveCoreHex
+                          });
+                        }}
+                        className="absolute -top-3 -left-3 w-12 h-12 cursor-pointer opacity-100"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold text-white">Lattice & Beacons</div>
+                      <div className="text-[8px] text-gray-400">Wireframe, Rim & Rings</div>
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={effectiveSecondaryHex.toUpperCase()}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                        setCustomColors({
+                          primary: effectivePrimaryHex,
+                          secondary: val,
+                          core: effectiveCoreHex
+                        });
+                      }
+                    }}
+                    className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-purple-300 font-mono text-[10px] text-center uppercase outline-none focus:border-purple-400"
+                  />
+                </div>
+
+                {/* Laser Core Channel */}
+                <div className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-white/10">
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-6 h-6 rounded-lg overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
+                      <input
+                        type="color"
+                        value={effectiveCoreHex}
+                        onChange={(e) => {
+                          setCustomColors({
+                            primary: effectivePrimaryHex,
+                            secondary: effectiveSecondaryHex,
+                            core: e.target.value
+                          });
+                        }}
+                        className="absolute -top-3 -left-3 w-12 h-12 cursor-pointer opacity-100"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold text-white">Laser Spine Core</div>
+                      <div className="text-[8px] text-gray-400">Central Luminous Filament</div>
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={effectiveCoreHex.toUpperCase()}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                        setCustomColors({
+                          primary: effectivePrimaryHex,
+                          secondary: effectiveSecondaryHex,
+                          core: val
+                        });
+                      }
+                    }}
+                    className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-amber-200 font-mono text-[10px] text-center uppercase outline-none focus:border-amber-400"
+                  />
+                </div>
+              </div>
+
+              {/* Section 3: Reset to Chain Preset */}
+              <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between gap-2">
+                <button
+                  onClick={() => {
+                    setCustomColors(null);
+                    spatialAudio.playClick(900);
+                  }}
+                  className="flex-1 py-1 px-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 text-[9.5px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Reset to {activeChainMeta.shortName} Native</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Floating Invariant Attestation Badges */}
           {tags.map((tag) => (
@@ -1345,7 +1763,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
                       : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  {mat === 'LIQUID_CHROME' ? 'Titanium Rail' : mat === 'HOLO_WIREFRAME' ? 'Stealth Carbon' : 'Obsidian Crystal'}
+                  {mat === 'LIQUID_CHROME' ? 'Titanium Chrome' : mat === 'HOLO_WIREFRAME' ? 'Cyber Lattice' : 'Obsidian Glass'}
                 </button>
               ))}
             </div>

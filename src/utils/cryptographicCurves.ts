@@ -246,7 +246,7 @@ export const CHAIN_PRESETS: Record<Exclude<ChainKey, 'CUSTOM'>, ChainPreset> = {
       p: 3,
       q: 7,
       twist: 1.0,
-      tubeRadius: 0.08
+      tubeRadius: 0.20
     },
     primaryColor: 0x00ffa3,
     primaryHex: '#00ffa3',
@@ -276,7 +276,7 @@ export const CHAIN_PRESETS: Record<Exclude<ChainKey, 'CUSTOM'>, ChainPreset> = {
       p: 2,
       q: 5,
       twist: 1.65,
-      tubeRadius: 0.075
+      tubeRadius: 0.19
     },
     primaryColor: 0x14f195,
     primaryHex: '#14f195',
@@ -306,7 +306,7 @@ export const CHAIN_PRESETS: Record<Exclude<ChainKey, 'CUSTOM'>, ChainPreset> = {
       p: 4,
       q: 5,
       twist: 0.90,
-      tubeRadius: 0.08
+      tubeRadius: 0.20
     },
     primaryColor: 0x28a0f0,
     primaryHex: '#28a0f0',
@@ -336,7 +336,7 @@ export const CHAIN_PRESETS: Record<Exclude<ChainKey, 'CUSTOM'>, ChainPreset> = {
       p: 3,
       q: 4,
       twist: 1.35,
-      tubeRadius: 0.075
+      tubeRadius: 0.19
     },
     primaryColor: 0xff6b4a,
     primaryHex: '#ff6b4a',
