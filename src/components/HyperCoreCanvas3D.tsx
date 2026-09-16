@@ -30,6 +30,8 @@ import {
   parseFormulaInput
 } from '../utils/cryptographicCurves';
 
+export type InspectorTab = 'FORMULA' | 'COLOR';
+
 export interface CustomColors {
   primary: string;
   secondary: string;
@@ -187,10 +189,25 @@ export const HyperCoreCanvas3D: React.FC = () => {
     return base;
   });
 
-  const [isLabOpen, setIsLabOpen] = useState<boolean>(() => {
+  const [activeInspectorTab, setActiveInspectorTab] = useState<InspectorTab>(() => {
+    if (typeof window === 'undefined') return 'FORMULA';
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get('color') === '1' || sp.get('colors') === '1' || sp.get('studio') === '1') {
+      return 'COLOR';
+    }
+    return 'FORMULA';
+  });
+
+  const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     const sp = new URLSearchParams(window.location.search);
-    return sp.get('lab') === '1' || sp.get('lab') === 'true';
+    return (
+      sp.get('lab') === '1' ||
+      sp.get('lab') === 'true' ||
+      sp.get('color') === '1' ||
+      sp.get('colors') === '1' ||
+      sp.get('studio') === '1'
+    );
   });
 
   // Docking mode: RIGHT sidebar or BOTTOM drawer
@@ -239,12 +256,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
     return null;
   });
 
-  const [isColorStudioOpen, setIsColorStudioOpen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const sp = new URLSearchParams(window.location.search);
-    return sp.get('color') === '1' || sp.get('colors') === '1' || sp.get('studio') === '1';
-  });
-
   // Synchronized state refs for callbacks & ResizeObserver
   const isExplodedRef = useRef(isExploded);
   const explodeLerpRef = useRef(isExploded ? 1.0 : 0);
@@ -255,7 +266,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
   const naturalRadiusRef = useRef<number>(3.2);
   const userZoomScaleRef = useRef<number>(userZoomScale);
   const dockModeRef = useRef<DockMode>(dockMode);
-  const isLabOpenRef = useRef<boolean>(isLabOpen);
+  const isDockOpenRef = useRef<boolean>(isInspectorOpen);
 
   useEffect(() => {
     userZoomScaleRef.current = userZoomScale;
@@ -266,8 +277,35 @@ export const HyperCoreCanvas3D: React.FC = () => {
   }, [dockMode]);
 
   useEffect(() => {
-    isLabOpenRef.current = isLabOpen;
-  }, [isLabOpen]);
+    isDockOpenRef.current = isInspectorOpen;
+  }, [isInspectorOpen]);
+
+  // Helper to open/close inspector and switch tabs with URL state sync
+  const setInspectorMode = (open: boolean, tab: InspectorTab = activeInspectorTab) => {
+    setIsInspectorOpen(open);
+    isDockOpenRef.current = open;
+    setActiveInspectorTab(tab);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (open) {
+        if (tab === 'FORMULA') {
+          url.searchParams.set('lab', '1');
+          url.searchParams.delete('color');
+          url.searchParams.delete('colors');
+          url.searchParams.delete('studio');
+        } else {
+          url.searchParams.set('color', '1');
+          url.searchParams.delete('lab');
+        }
+      } else {
+        url.searchParams.delete('lab');
+        url.searchParams.delete('color');
+        url.searchParams.delete('colors');
+        url.searchParams.delete('studio');
+      }
+      window.history.replaceState({}, '', url.toString());
+    }
+  };
 
   // References for three.js objects
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -548,8 +586,8 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
   // Helper to compute ideal scale & position based on dock mode and aspect ratio
   const computeFramingParameters = (aspect: number, zoomScale: number) => {
-    const isBottom = isLabOpenRef.current && dockModeRef.current === 'BOTTOM';
-    const isRight = isLabOpenRef.current && dockModeRef.current === 'RIGHT';
+    const isBottom = isDockOpenRef.current && dockModeRef.current === 'BOTTOM';
+    const isRight = isDockOpenRef.current && dockModeRef.current === 'RIGHT';
 
     let baseRadius = 1.68;
     let posY = 0;
@@ -1145,7 +1183,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
     setParseStatus({ success: true, message: `Reset to ${preset.name}`, detectedType: 'PARAMS' });
 
     setCustomColors(null);
-    setIsColorStudioOpen(false);
+    setInspectorMode(false);
 
     setIsExploded(false);
     isExplodedRef.current = false;
@@ -1359,16 +1397,20 @@ export const HyperCoreCanvas3D: React.FC = () => {
         <div className="flex items-center gap-1.5 ml-auto">
           <button
             onClick={() => {
-              const next = !isColorStudioOpen;
-              setIsColorStudioOpen(next);
-              spatialAudio.playClick(next ? 1050 : 850);
+              if (isInspectorOpen && activeInspectorTab === 'COLOR') {
+                setInspectorMode(false);
+                spatialAudio.playClick(850);
+              } else {
+                setInspectorMode(true, 'COLOR');
+                spatialAudio.playClick(1050);
+              }
             }}
             className={`flex items-center gap-1.5 font-mono px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
-              isColorStudioOpen
-                ? 'bg-purple-500/25 text-white border-purple-400 shadow-lg shadow-purple-500/25'
+              isInspectorOpen && activeInspectorTab === 'COLOR'
+                ? 'bg-purple-500/25 text-white border-purple-400 shadow-lg shadow-purple-500/25 ring-1 ring-purple-400/50'
                 : 'bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border-purple-500/30'
             }`}
-            title="Toggle Color Studio & Themes (Студия цвета и кастомных палитр)"
+            title="Toggle Color Studio Dock (0% Overlap)"
           >
             <Palette className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">COLOR_STUDIO</span>
@@ -1380,16 +1422,20 @@ export const HyperCoreCanvas3D: React.FC = () => {
 
           <button
             onClick={() => {
-              const next = !isLabOpen;
-              setIsLabOpen(next);
-              spatialAudio.playClick(next ? 1100 : 900);
+              if (isInspectorOpen && activeInspectorTab === 'FORMULA') {
+                setInspectorMode(false);
+                spatialAudio.playClick(850);
+              } else {
+                setInspectorMode(true, 'FORMULA');
+                spatialAudio.playClick(1100);
+              }
             }}
             className={`flex items-center gap-1.5 font-mono px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
-              isLabOpen
-                ? 'bg-cyan-500/25 text-white border-cyan-400 shadow-lg shadow-cyan-500/20'
+              isInspectorOpen && activeInspectorTab === 'FORMULA'
+                ? 'bg-cyan-500/25 text-white border-cyan-400 shadow-lg shadow-cyan-500/20 ring-1 ring-cyan-400/50'
                 : 'bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
             }`}
-            title="Toggle Formula Lab Inspector"
+            title="Toggle Formula Lab Inspector (0% Overlap)"
           >
             <FlaskConical className="w-3.5 h-3.5" />
             <span>FORMULA_LAB</span>
@@ -1428,7 +1474,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
       {/* ========================================================================= */}
       <div
         className={`relative flex-1 min-h-0 w-full flex ${
-          isLabOpen && dockMode === 'BOTTOM' ? 'flex-col' : 'flex-col md:flex-row'
+          isInspectorOpen && dockMode === 'BOTTOM' ? 'flex-col' : 'flex-col md:flex-row'
         }`}
       >
         {/* PANE 1: THE DEDICATED 3D CANVAS VIEWPORT */}
@@ -1442,237 +1488,6 @@ export const HyperCoreCanvas3D: React.FC = () => {
             onPointerUp={handlePointerUp}
             className="w-full h-full block cursor-grab active:cursor-grabbing"
           />
-
-          {/* ========================================================================= */}
-          {/* FLOATING COLOR STUDIO PANEL                                               */}
-          {/* ========================================================================= */}
-          {isColorStudioOpen && (
-            <div
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-              className={`absolute z-30 w-80 max-w-[calc(100%-24px)] bg-[#050814]/95 backdrop-blur-2xl border border-white/15 rounded-2xl shadow-2xl p-3.5 font-mono text-xs text-gray-200 animate-in fade-in slide-in-from-top-3 duration-200 ${
-                isLabOpen && dockMode === 'RIGHT' ? 'top-3 left-3' : 'top-3 right-3'
-              }`}
-            >
-              {/* Panel Header */}
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <div className="flex items-center gap-1.5">
-                  <div className="p-1 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                    <Palette className="w-3.5 h-3.5" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-white text-xs flex items-center gap-1.5">
-                      <span>COLOR STUDIO</span>
-                      <span className="text-[8px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                        LIVE GPU
-                      </span>
-                    </div>
-                    <div className="text-[8px] text-gray-400">Cryptographic Chromatic Shaders</div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => setIsColorStudioOpen(false)}
-                  className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                  title="Close Color Studio"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              {/* Section 1: 1-Click Curated Presets */}
-              <div className="mt-2.5">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[8.5px] uppercase tracking-wider text-gray-400">Curated Cyber Themes:</span>
-                  <button
-                    onClick={handleRandomizeColors}
-                    className="flex items-center gap-1 text-[8.5px] text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
-                    title="Randomize cyber palette"
-                  >
-                    <Sparkles className="w-2.5 h-2.5" />
-                    <span>Shuffle</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-1.5">
-                  {COLOR_PRESETS.map((preset) => {
-                    const isAct =
-                      customColors?.primary === preset.primary &&
-                      customColors?.secondary === preset.secondary;
-                    return (
-                      <button
-                        key={preset.id}
-                        onClick={() => {
-                          setCustomColors({
-                            primary: preset.primary,
-                            secondary: preset.secondary,
-                            core: preset.core
-                          });
-                          spatialAudio.playVerificationPing(1.2);
-                        }}
-                        className={`flex items-center gap-2 p-1.5 rounded-xl border text-left transition-all cursor-pointer ${
-                          isAct
-                            ? 'bg-white/15 border-purple-400 text-white shadow-md'
-                            : 'bg-black/40 hover:bg-white/5 border-white/10 text-gray-300'
-                        }`}
-                      >
-                        <div className="flex -space-x-1 shrink-0">
-                          <span
-                            className="w-3 h-3 rounded-full border border-black/40"
-                            style={{ backgroundColor: preset.primary }}
-                          />
-                          <span
-                            className="w-3 h-3 rounded-full border border-black/40"
-                            style={{ backgroundColor: preset.secondary }}
-                          />
-                        </div>
-                        <div className="truncate">
-                          <div className="text-[10px] font-bold leading-tight truncate">{preset.name}</div>
-                          <div className="text-[8px] text-gray-400 leading-tight">{preset.badge}</div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Section 2: Real-time Live Color Pickers */}
-              <div className="mt-3 space-y-1.5">
-                <div className="text-[8.5px] uppercase tracking-wider text-gray-400 mb-1">Custom Shader Channels:</div>
-
-                {/* Primary Channel */}
-                <div className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-white/10">
-                  <div className="flex items-center gap-2">
-                    <div className="relative w-6 h-6 rounded-lg overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
-                      <input
-                        type="color"
-                        value={effectivePrimaryHex}
-                        onChange={(e) => {
-                          setCustomColors({
-                            primary: e.target.value,
-                            secondary: effectiveSecondaryHex,
-                            core: effectiveCoreHex
-                          });
-                        }}
-                        className="absolute -top-3 -left-3 w-12 h-12 cursor-pointer opacity-100"
-                      />
-                    </div>
-                    <div>
-                      <div className="text-[10px] font-bold text-white">Primary Rail</div>
-                      <div className="text-[8px] text-gray-400">Manifold & Key Lights</div>
-                    </div>
-                  </div>
-                  <input
-                    type="text"
-                    value={effectivePrimaryHex.toUpperCase()}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
-                        setCustomColors({
-                          primary: val,
-                          secondary: effectiveSecondaryHex,
-                          core: effectiveCoreHex
-                        });
-                      }
-                    }}
-                    className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-cyan-300 font-mono text-[10px] text-center uppercase outline-none focus:border-cyan-400"
-                  />
-                </div>
-
-                {/* Secondary Channel */}
-                <div className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-white/10">
-                  <div className="flex items-center gap-2">
-                    <div className="relative w-6 h-6 rounded-lg overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
-                      <input
-                        type="color"
-                        value={effectiveSecondaryHex}
-                        onChange={(e) => {
-                          setCustomColors({
-                            primary: effectivePrimaryHex,
-                            secondary: e.target.value,
-                            core: effectiveCoreHex
-                          });
-                        }}
-                        className="absolute -top-3 -left-3 w-12 h-12 cursor-pointer opacity-100"
-                      />
-                    </div>
-                    <div>
-                      <div className="text-[10px] font-bold text-white">Lattice & Beacons</div>
-                      <div className="text-[8px] text-gray-400">Wireframe, Rim & Rings</div>
-                    </div>
-                  </div>
-                  <input
-                    type="text"
-                    value={effectiveSecondaryHex.toUpperCase()}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
-                        setCustomColors({
-                          primary: effectivePrimaryHex,
-                          secondary: val,
-                          core: effectiveCoreHex
-                        });
-                      }
-                    }}
-                    className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-purple-300 font-mono text-[10px] text-center uppercase outline-none focus:border-purple-400"
-                  />
-                </div>
-
-                {/* Laser Core Channel */}
-                <div className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-white/10">
-                  <div className="flex items-center gap-2">
-                    <div className="relative w-6 h-6 rounded-lg overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
-                      <input
-                        type="color"
-                        value={effectiveCoreHex}
-                        onChange={(e) => {
-                          setCustomColors({
-                            primary: effectivePrimaryHex,
-                            secondary: effectiveSecondaryHex,
-                            core: e.target.value
-                          });
-                        }}
-                        className="absolute -top-3 -left-3 w-12 h-12 cursor-pointer opacity-100"
-                      />
-                    </div>
-                    <div>
-                      <div className="text-[10px] font-bold text-white">Laser Spine Core</div>
-                      <div className="text-[8px] text-gray-400">Central Luminous Filament</div>
-                    </div>
-                  </div>
-                  <input
-                    type="text"
-                    value={effectiveCoreHex.toUpperCase()}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
-                        setCustomColors({
-                          primary: effectivePrimaryHex,
-                          secondary: effectiveSecondaryHex,
-                          core: val
-                        });
-                      }
-                    }}
-                    className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-amber-200 font-mono text-[10px] text-center uppercase outline-none focus:border-amber-400"
-                  />
-                </div>
-              </div>
-
-              {/* Section 3: Reset to Chain Preset */}
-              <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between gap-2">
-                <button
-                  onClick={() => {
-                    setCustomColors(null);
-                    spatialAudio.playClick(900);
-                  }}
-                  className="flex-1 py-1 px-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 text-[9.5px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Reset to {activeChainMeta.shortName} Native</span>
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Floating Invariant Attestation Badges */}
           {tags.map((tag) => (
@@ -1699,8 +1514,8 @@ export const HyperCoreCanvas3D: React.FC = () => {
             </div>
           ))}
 
-          {/* Subtle Top Indicator Inside Canvas (Shown only when lab is closed or docked at bottom) */}
-          {(!isLabOpen || dockMode === 'BOTTOM') && (
+          {/* Subtle Top Indicator Inside Canvas (Shown only when inspector is closed or docked at bottom) */}
+          {(!isInspectorOpen || dockMode === 'BOTTOM') && (
             <div className="absolute top-2.5 left-3 z-20 pointer-events-none flex items-center gap-2">
               <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md border border-white/10 px-2.5 py-1 rounded-xl text-[11px] font-mono text-gray-300">
                 <Sparkles className="w-3 h-3 text-cyan-400 shrink-0" />
@@ -1785,7 +1600,7 @@ export const HyperCoreCanvas3D: React.FC = () => {
         {/* ========================================================================= */}
         {/* PANE 2A: RIGHT SIDEBAR INSPECTOR DOCK                                     */}
         {/* ========================================================================= */}
-        {isLabOpen && dockMode === 'RIGHT' && (
+        {isInspectorOpen && dockMode === 'RIGHT' && (
           <div
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
@@ -1793,32 +1608,53 @@ export const HyperCoreCanvas3D: React.FC = () => {
           >
             <div>
               {/* Header */}
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <div className="flex items-center gap-1.5">
-                  <div className="p-1 rounded-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-                    <FlaskConical className="w-3.5 h-3.5" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-white text-xs tracking-wide flex items-center gap-1.5">
-                      <span>FORMULA LAB</span>
-                      <span className="text-[8.5px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                        GPU &lt; 2ms
-                      </span>
-                    </div>
-                    <div className="text-[8px] text-gray-400">Side-by-Side Inspector</div>
-                  </div>
+              <div className="flex items-center justify-between pb-2 border-b border-white/10 gap-1.5">
+                {/* Segmented Tab Switcher */}
+                <div className="flex items-center bg-black/60 p-0.5 rounded-lg border border-white/10 shrink-0">
+                  <button
+                    onClick={() => {
+                      setInspectorMode(true, 'FORMULA');
+                      spatialAudio.playClick(950);
+                    }}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-md text-[9.5px] font-bold transition-all cursor-pointer ${
+                      activeInspectorTab === 'FORMULA'
+                        ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40 shadow-sm'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <FlaskConical className="w-3 h-3" />
+                    <span>FORMULA</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInspectorMode(true, 'COLOR');
+                      spatialAudio.playClick(1050);
+                    }}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-md text-[9.5px] font-bold transition-all cursor-pointer ${
+                      activeInspectorTab === 'COLOR'
+                        ? 'bg-purple-500/25 text-purple-200 border border-purple-400/40 shadow-sm'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <Palette className="w-3 h-3" />
+                    <span>COLORS</span>
+                    {customColors && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />}
+                  </button>
                 </div>
 
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 ml-auto">
                   <button
                     onClick={() => handleDockChange('BOTTOM')}
-                    className="px-1.5 py-0.5 rounded text-[8.5px] font-mono bg-white/5 hover:bg-white/15 border border-white/10 text-cyan-300 hover:text-white transition-all cursor-pointer"
+                    className="px-1.5 py-1 rounded text-[8.5px] font-mono bg-white/5 hover:bg-white/15 border border-white/10 text-cyan-300 hover:text-white transition-all cursor-pointer"
                     title="Switch to Bottom Drawer Dock"
                   >
                     ⤓ Bottom
                   </button>
                   <button
-                    onClick={() => setIsLabOpen(false)}
+                    onClick={() => {
+                      setInspectorMode(false);
+                      spatialAudio.playClick(850);
+                    }}
                     className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
                     title="Close Inspector"
                   >
@@ -1827,7 +1663,9 @@ export const HyperCoreCanvas3D: React.FC = () => {
                 </div>
               </div>
 
-              {/* DIRECT EDITABLE INLINE FORMULA CARD */}
+              {activeInspectorTab === 'FORMULA' ? (
+                <>
+                  {/* DIRECT EDITABLE INLINE FORMULA CARD */}
               <div className="mt-2 p-2 rounded-xl bg-black/60 border border-white/10 flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[8px] text-gray-400 uppercase tracking-wider">ACTIVE FORMULA (CLICK &amp; TYPE):</span>
@@ -2149,6 +1987,222 @@ export const HyperCoreCanvas3D: React.FC = () => {
                   <span>RESET PARAMETERS</span>
                 </button>
               </div>
+                </>
+              ) : (
+                /* COLOR STUDIO CONTENT IN RIGHT SIDEBAR */
+                <div className="mt-2 space-y-3">
+                  {/* Section 1: Curated Cyber Themes */}
+                  <div className="p-2.5 rounded-xl bg-black/60 border border-white/10">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[8.5px] uppercase tracking-wider text-gray-400 font-bold">
+                        CURATED CYBER THEMES
+                      </span>
+                      <button
+                        onClick={handleRandomizeColors}
+                        className="flex items-center gap-1 text-[8.5px] text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
+                        title="Randomize cyber palette"
+                      >
+                        <Sparkles className="w-2.5 h-2.5" />
+                        <span>Shuffle</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {COLOR_PRESETS.map((preset) => {
+                        const isAct =
+                          customColors?.primary === preset.primary &&
+                          customColors?.secondary === preset.secondary;
+                        return (
+                          <button
+                            key={preset.id}
+                            onClick={() => {
+                              setCustomColors({
+                                primary: preset.primary,
+                                secondary: preset.secondary,
+                                core: preset.core
+                              });
+                              spatialAudio.playVerificationPing(1.2);
+                            }}
+                            className={`flex items-center gap-2 p-1.5 rounded-xl border text-left transition-all cursor-pointer ${
+                              isAct
+                                ? 'bg-white/15 border-purple-400 text-white shadow-md'
+                                : 'bg-black/40 hover:bg-white/5 border-white/10 text-gray-300'
+                            }`}
+                          >
+                            <div className="flex -space-x-1 shrink-0">
+                              <span
+                                className="w-3 h-3 rounded-full border border-black/40"
+                                style={{ backgroundColor: preset.primary }}
+                              />
+                              <span
+                                className="w-3 h-3 rounded-full border border-black/40"
+                                style={{ backgroundColor: preset.secondary }}
+                              />
+                            </div>
+                            <div className="truncate">
+                              <div className="text-[10px] font-bold leading-tight truncate">{preset.name}</div>
+                              <div className="text-[8px] text-gray-400 leading-tight">{preset.badge}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Section 2: Custom Shader Channels */}
+                  <div className="p-2.5 rounded-xl bg-black/60 border border-white/10 space-y-2">
+                    <div className="text-[8.5px] uppercase tracking-wider text-gray-400 font-bold mb-1">
+                      CUSTOM SHADER CHANNELS:
+                    </div>
+
+                    {/* Primary Channel */}
+                    <div className="flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/10">
+                      <div className="flex items-center gap-2">
+                        <div className="relative w-6 h-6 rounded-lg overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
+                          <input
+                            type="color"
+                            value={effectivePrimaryHex}
+                            onChange={(e) => {
+                              setCustomColors({
+                                primary: e.target.value,
+                                secondary: effectiveSecondaryHex,
+                                core: effectiveCoreHex
+                              });
+                            }}
+                            className="absolute -top-3 -left-3 w-12 h-12 cursor-pointer opacity-100"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold text-white">Primary Rail</div>
+                          <div className="text-[8px] text-gray-400">Manifold & Key Lights</div>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={effectivePrimaryHex.toUpperCase()}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                            setCustomColors({
+                              primary: val,
+                              secondary: effectiveSecondaryHex,
+                              core: effectiveCoreHex
+                            });
+                          }
+                        }}
+                        className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-cyan-300 font-mono text-[10px] text-center uppercase outline-none focus:border-cyan-400"
+                      />
+                    </div>
+
+                    {/* Secondary Channel */}
+                    <div className="flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/10">
+                      <div className="flex items-center gap-2">
+                        <div className="relative w-6 h-6 rounded-lg overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
+                          <input
+                            type="color"
+                            value={effectiveSecondaryHex}
+                            onChange={(e) => {
+                              setCustomColors({
+                                primary: effectivePrimaryHex,
+                                secondary: e.target.value,
+                                core: effectiveCoreHex
+                              });
+                            }}
+                            className="absolute -top-3 -left-3 w-12 h-12 cursor-pointer opacity-100"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold text-white">Lattice & Beacons</div>
+                          <div className="text-[8px] text-gray-400">Wireframe, Rim & Rings</div>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={effectiveSecondaryHex.toUpperCase()}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                            setCustomColors({
+                              primary: effectivePrimaryHex,
+                              secondary: val,
+                              core: effectiveCoreHex
+                            });
+                          }
+                        }}
+                        className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-purple-300 font-mono text-[10px] text-center uppercase outline-none focus:border-purple-400"
+                      />
+                    </div>
+
+                    {/* Laser Core Channel */}
+                    <div className="flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/10">
+                      <div className="flex items-center gap-2">
+                        <div className="relative w-6 h-6 rounded-lg overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
+                          <input
+                            type="color"
+                            value={effectiveCoreHex}
+                            onChange={(e) => {
+                              setCustomColors({
+                                primary: effectivePrimaryHex,
+                                secondary: effectiveSecondaryHex,
+                                core: e.target.value
+                              });
+                            }}
+                            className="absolute -top-3 -left-3 w-12 h-12 cursor-pointer opacity-100"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-[10px] font-bold text-white">Laser Spine Core</div>
+                          <div className="text-[8px] text-gray-400">Central Luminous Filament</div>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={effectiveCoreHex.toUpperCase()}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                            setCustomColors({
+                              primary: effectivePrimaryHex,
+                              secondary: effectiveSecondaryHex,
+                              core: val
+                            });
+                          }
+                        }}
+                        className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-amber-200 font-mono text-[10px] text-center uppercase outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Section 3: Live Palette Swatch & Reset */}
+                  <div className="p-2.5 rounded-xl bg-black/60 border border-white/10 space-y-2">
+                    <div className="flex items-center justify-between text-[8px] text-gray-400">
+                      <span>LIVE CHROMATIC SPECTRUM:</span>
+                      <span className="font-bold text-white font-mono">
+                        {customColors ? 'CUSTOM PALETTE' : `${activeChainMeta.shortName} NATIVE`}
+                      </span>
+                    </div>
+
+                    {/* Gradient bar preview */}
+                    <div
+                      className="h-4 rounded-lg border border-white/20 shadow-inner"
+                      style={{
+                        background: `linear-gradient(90deg, ${effectivePrimaryHex} 0%, ${effectiveSecondaryHex} 50%, ${effectiveCoreHex} 100%)`
+                      }}
+                    />
+
+                    <button
+                      onClick={() => {
+                        setCustomColors(null);
+                        spatialAudio.playClick(900);
+                      }}
+                      className="w-full py-1.5 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 text-[9.5px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Reset to {activeChainMeta.shortName} Native</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="pt-1.5 border-t border-white/10 text-[7.5px] text-gray-400 flex items-center justify-between">
@@ -2161,23 +2215,52 @@ export const HyperCoreCanvas3D: React.FC = () => {
         {/* ========================================================================= */}
         {/* PANE 2B: BOTTOM DRAWER DOCK MODE                                          */}
         {/* ========================================================================= */}
-        {isLabOpen && dockMode === 'BOTTOM' && (
+        {isInspectorOpen && dockMode === 'BOTTOM' && (
           <div
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
             className="h-[235px] w-full shrink-0 border-t border-white/10 bg-[#040714]/98 backdrop-blur-2xl flex flex-col justify-between p-3 z-20 font-mono text-xs text-gray-200 animate-in fade-in slide-in-from-bottom-4 duration-300"
           >
             <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
-              <div className="flex items-center gap-2">
-                <div className="p-1 rounded-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-                  <FlaskConical className="w-3.5 h-3.5" />
+              <div className="flex items-center gap-3">
+                {/* Segmented Tab Switcher */}
+                <div className="flex items-center bg-black/60 p-0.5 rounded-lg border border-white/10 shrink-0">
+                  <button
+                    onClick={() => {
+                      setInspectorMode(true, 'FORMULA');
+                      spatialAudio.playClick(950);
+                    }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[9.5px] font-bold transition-all cursor-pointer ${
+                      activeInspectorTab === 'FORMULA'
+                        ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40 shadow-sm'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <FlaskConical className="w-3 h-3" />
+                    <span>FORMULA LAB</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInspectorMode(true, 'COLOR');
+                      spatialAudio.playClick(1050);
+                    }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[9.5px] font-bold transition-all cursor-pointer ${
+                      activeInspectorTab === 'COLOR'
+                        ? 'bg-purple-500/25 text-purple-200 border border-purple-400/40 shadow-sm'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    <Palette className="w-3 h-3" />
+                    <span>COLOR STUDIO</span>
+                    {customColors && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />}
+                  </button>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-white text-xs tracking-wide">FORMULA LAB DRAWER</span>
+
+                <div className="hidden sm:flex items-center gap-2">
                   <span className="text-[8.5px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                     GPU &lt; 2ms
                   </span>
-                  <span className="text-[9px] text-emerald-400 hidden sm:inline">• 100% Unobstructed Panoramic Viewport</span>
+                  <span className="text-[9px] text-emerald-400">• 100% Unobstructed Panoramic Viewport</span>
                 </div>
               </div>
 
@@ -2190,16 +2273,20 @@ export const HyperCoreCanvas3D: React.FC = () => {
                   ⇥ Right Dock
                 </button>
                 <button
-                  onClick={() => setIsLabOpen(false)}
+                  onClick={() => {
+                    setInspectorMode(false);
+                    spatialAudio.playClick(850);
+                  }}
                   className="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                  title="Close Formula Lab"
+                  title="Close Inspector"
                 >
                   <X className="w-3 h-3" />
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1.5 flex-1 overflow-x-auto min-w-[650px]">
+            {activeInspectorTab === 'FORMULA' ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1.5 flex-1 overflow-x-auto min-w-[650px]">
               {/* Column 1: Inline Formula with generous left alignment padding */}
               <div className="flex flex-col justify-between bg-black/50 p-2.5 rounded-xl border border-white/10 overflow-hidden">
                 <div>
@@ -2418,6 +2505,220 @@ export const HyperCoreCanvas3D: React.FC = () => {
                 </button>
               </div>
             </div>
+            ) : (
+              /* COLOR STUDIO CONTENT IN BOTTOM DRAWER */
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1.5 flex-1 overflow-x-auto min-w-[650px]">
+                {/* Column 1: Curated Cyber Themes */}
+                <div className="flex flex-col justify-between bg-black/50 p-2.5 rounded-xl border border-white/10 overflow-hidden">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[8.5px] uppercase tracking-wider text-gray-400 font-bold">
+                        CURATED CYBER PALETTES:
+                      </span>
+                      <button
+                        onClick={handleRandomizeColors}
+                        className="flex items-center gap-1 text-[8.5px] text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
+                        title="Randomize cyber palette"
+                      >
+                        <Sparkles className="w-2.5 h-2.5" />
+                        <span>Shuffle</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1 max-h-[135px] overflow-y-auto pr-0.5">
+                      {COLOR_PRESETS.map((preset) => {
+                        const isAct =
+                          customColors?.primary === preset.primary &&
+                          customColors?.secondary === preset.secondary;
+                        return (
+                          <button
+                            key={preset.id}
+                            onClick={() => {
+                              setCustomColors({
+                                primary: preset.primary,
+                                secondary: preset.secondary,
+                                core: preset.core
+                              });
+                              spatialAudio.playVerificationPing(1.2);
+                            }}
+                            className={`flex items-center gap-1.5 p-1 rounded-lg border text-left transition-all cursor-pointer ${
+                              isAct
+                                ? 'bg-white/15 border-purple-400 text-white'
+                                : 'bg-black/40 hover:bg-white/5 border-white/10 text-gray-300'
+                            }`}
+                          >
+                            <div className="flex -space-x-1 shrink-0">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full border border-black/40"
+                                style={{ backgroundColor: preset.primary }}
+                              />
+                              <span
+                                className="w-2.5 h-2.5 rounded-full border border-black/40"
+                                style={{ backgroundColor: preset.secondary }}
+                              />
+                            </div>
+                            <span className="text-[9px] font-bold truncate">{preset.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="text-[7.5px] text-gray-400 pt-1 border-t border-white/10 flex items-center justify-between">
+                    <span>8 Blockchain Themes</span>
+                    <span className="text-purple-300">1-Click Apply</span>
+                  </div>
+                </div>
+
+                {/* Column 2: Manifold & Lattice Channels */}
+                <div className="flex flex-col justify-between bg-black/50 p-2.5 rounded-xl border border-white/10">
+                  <div className="space-y-1.5">
+                    <div className="text-[8.5px] uppercase tracking-wider text-gray-400 font-bold mb-1">
+                      GPU SHADER CHANNELS:
+                    </div>
+
+                    {/* Primary Channel */}
+                    <div className="flex items-center justify-between p-1.5 rounded-lg bg-black/40 border border-white/10">
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative w-5 h-5 rounded-md overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
+                          <input
+                            type="color"
+                            value={effectivePrimaryHex}
+                            onChange={(e) => {
+                              setCustomColors({
+                                primary: e.target.value,
+                                secondary: effectiveSecondaryHex,
+                                core: effectiveCoreHex
+                              });
+                            }}
+                            className="absolute -top-3 -left-3 w-10 h-10 cursor-pointer opacity-100"
+                          />
+                        </div>
+                        <div className="text-[9.5px] font-bold text-white">Primary Rail</div>
+                      </div>
+                      <input
+                        type="text"
+                        value={effectivePrimaryHex.toUpperCase()}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                            setCustomColors({
+                              primary: val,
+                              secondary: effectiveSecondaryHex,
+                              core: effectiveCoreHex
+                            });
+                          }
+                        }}
+                        className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-cyan-300 font-mono text-[9.5px] text-center uppercase outline-none focus:border-cyan-400"
+                      />
+                    </div>
+
+                    {/* Secondary Channel */}
+                    <div className="flex items-center justify-between p-1.5 rounded-lg bg-black/40 border border-white/10">
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative w-5 h-5 rounded-md overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
+                          <input
+                            type="color"
+                            value={effectiveSecondaryHex}
+                            onChange={(e) => {
+                              setCustomColors({
+                                primary: effectivePrimaryHex,
+                                secondary: e.target.value,
+                                core: effectiveCoreHex
+                              });
+                            }}
+                            className="absolute -top-3 -left-3 w-10 h-10 cursor-pointer opacity-100"
+                          />
+                        </div>
+                        <div className="text-[9.5px] font-bold text-white">Lattice & Beacons</div>
+                      </div>
+                      <input
+                        type="text"
+                        value={effectiveSecondaryHex.toUpperCase()}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                            setCustomColors({
+                              primary: effectivePrimaryHex,
+                              secondary: val,
+                              core: effectiveCoreHex
+                            });
+                          }
+                        }}
+                        className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-purple-300 font-mono text-[9.5px] text-center uppercase outline-none focus:border-purple-400"
+                      />
+                    </div>
+                  </div>
+                  <div className="text-[7.5px] text-gray-400 pt-1 border-t border-white/10 flex items-center justify-between">
+                    <span>Key Lights & Specular</span>
+                    <span className="text-cyan-300">Live GPU Updates</span>
+                  </div>
+                </div>
+
+                {/* Column 3: Laser Spine Core Channel & Actions */}
+                <div className="flex flex-col justify-between bg-black/50 p-2.5 rounded-xl border border-white/10">
+                  <div className="space-y-1.5">
+                    <div className="text-[8.5px] uppercase tracking-wider text-gray-400 font-bold mb-1">
+                      CORE EMISSION & ACTIONS:
+                    </div>
+
+                    {/* Core Channel */}
+                    <div className="flex items-center justify-between p-1.5 rounded-lg bg-black/40 border border-white/10">
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative w-5 h-5 rounded-md overflow-hidden border border-white/20 shrink-0 cursor-pointer shadow-inner">
+                          <input
+                            type="color"
+                            value={effectiveCoreHex}
+                            onChange={(e) => {
+                              setCustomColors({
+                                primary: effectivePrimaryHex,
+                                secondary: effectiveSecondaryHex,
+                                core: e.target.value
+                              });
+                            }}
+                            className="absolute -top-3 -left-3 w-10 h-10 cursor-pointer opacity-100"
+                          />
+                        </div>
+                        <div className="text-[9.5px] font-bold text-white">Laser Spine Core</div>
+                      </div>
+                      <input
+                        type="text"
+                        value={effectiveCoreHex.toUpperCase()}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                            setCustomColors({
+                              primary: effectivePrimaryHex,
+                              secondary: effectiveSecondaryHex,
+                              core: val
+                            });
+                          }
+                        }}
+                        className="w-16 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-amber-200 font-mono text-[9.5px] text-center uppercase outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    {/* Gradient preview bar */}
+                    <div
+                      className="h-3.5 rounded-lg border border-white/20 shadow-inner"
+                      style={{
+                        background: `linear-gradient(90deg, ${effectivePrimaryHex} 0%, ${effectiveSecondaryHex} 50%, ${effectiveCoreHex} 100%)`
+                      }}
+                    />
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setCustomColors(null);
+                      spatialAudio.playClick(900);
+                    }}
+                    className="w-full py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 text-[9px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Reset to {activeChainMeta.shortName} Native</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
